@@ -531,7 +531,7 @@ function ImportPanel({ collections, onChanged, onDone, onError }: { collections:
 
   return (
     <div class="kb-import">
-      <textarea rows={3} value={text} placeholder="每行一个：arXiv ID / DOI / PDF 或 abs 链接" onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
+      <textarea rows={3} value={text} placeholder="每行一个：1706.03762 / DOI / PDF 或 abs 链接" onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
       <div class="kb-import-row">
         <select value={collection} onChange={(e) => setCollection((e.target as HTMLSelectElement).value)} title="导入后归入专题">
           <option value="">不归入专题</option>

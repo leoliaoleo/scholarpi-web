@@ -94,6 +94,17 @@ function decode(bytes: Uint8Array, charset: string): string {
 }
 
 export async function handleRelay(req: Request): Promise<Response> {
+  try {
+    return await handleRelayInner(req);
+  } catch (e: any) {
+    // Catch-all: never let an uncaught exception become HTTP 500
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[relay] Uncaught error:", message);
+    return apiError("internal_error", `服务端内部错误：${message.slice(0, 100)}`, 500);
+  }
+}
+
+async function handleRelayInner(req: Request): Promise<Response> {
   const isGet = req.method === "GET" || req.method === "HEAD";
   let raw = "";
   let wantBytes = false;
@@ -166,10 +177,12 @@ export async function handleRelay(req: Request): Promise<Response> {
       }
       break;
     }
-  } catch (e) {
+  } catch (e: any) {
     const name = e instanceof Error ? e.name : "Error";
+    const message = e instanceof Error ? e.message : String(e);
     if (name === "AbortError") return apiError("timeout", `抓取超时（${Math.round(RELAY_TIMEOUT_MS / 1000)}s）`, 504);
-    return apiError("fetch_failed", `抓取失败：${name}`, 502);
+    // Provide detailed error message for debugging
+    return apiError("fetch_failed", `抓取失败：${name} - ${message.slice(0, 100)}`, 502);
   } finally {
     clearTimeout(timer);
   }
@@ -180,11 +193,19 @@ export async function handleRelay(req: Request): Promise<Response> {
     if (!BINARY_TYPES.test(ctype) && !/pdf/i.test(url.pathname)) {
       return apiError("not_binary", `目标不是可下载文件（${ctype || "未知类型"}）`, 415);
     }
-    const { bytes, overflow } = await readCapped(res, RELAY_MAX_BYTES);
-    if (overflow || !bytes) return apiError("too_large", "文件超过大小限制", 413);
-    return new Response(bytes as BodyInit, {
+    // Stream the response directly instead of buffering, for edge runtime compatibility
+    const responseHeaders = new Headers({
+      "content-type": /pdf/i.test(ctype) ? "application/pdf" : "application/octet-stream",
+      "content-disposition": "inline",
+      "cache-control": "public, max-age=3600",
+    });
+    // Copy content-length if available
+    const contentLength = res.headers.get("content-length");
+    if (contentLength) responseHeaders.set("content-length", contentLength);
+    
+    return new Response(res.body, {
       status: res.status,
-      headers: { "content-type": /pdf/i.test(ctype) ? "application/pdf" : "application/octet-stream", "content-disposition": "inline" },
+      headers: responseHeaders,
     });
   }
 
@@ -208,6 +229,16 @@ export async function handleRelay(req: Request): Promise<Response> {
 
 /** Named arXiv entry point: export.arxiv.org sends no CORS headers at all. */
 export async function handleArxiv(req: Request): Promise<Response> {
+  try {
+    return await handleArxivInner(req);
+  } catch (e: any) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[arxiv] Uncaught error:", message);
+    return apiError("internal_error", `arXiv 查询内部错误：${message.slice(0, 100)}`, 500);
+  }
+}
+
+async function handleArxivInner(req: Request): Promise<Response> {
   const query = new URL(req.url).search;
   const target = await safeTarget(`https://export.arxiv.org/api/query${query}`);
   if (!target.url) return apiError("blocked", target.error, 400);

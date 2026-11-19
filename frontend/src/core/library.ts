@@ -395,13 +395,31 @@ function hashSeed(s: string): string {
 
 /**
  * One arXiv id / DOI / link → library record + metadata card, plus collection membership.
- * The PDF itself is fetched lazily by the reader, so importing is fast and costs no quota.
+ * Validates PDF accessibility before committing to avoid orphaned entries.
  */
 export async function importIdentifier(value: string, opts: { collectionId?: string; signal?: AbortSignal; withCard?: boolean } = {}): Promise<ImportResult> {
   const input = String(value || "").trim();
   if (!input) return { input, ok: false, itemKey: "", title: "", action: "failed", pdf: false, note: "内容为空" };
   try {
     const rec = await resolveExternal(input, opts.signal);
+    
+    // Validate PDF accessibility before registering
+    const pdfUrl = rec.pdfUrl || (rec.kind === "url" ? rec.url : null);
+    if (pdfUrl) {
+      const validation = await validatePdfAccessibility(pdfUrl, opts.signal);
+      if (!validation.ok) {
+        return { 
+          input, 
+          ok: false, 
+          itemKey: "", 
+          title: rec.title || "", 
+          action: "failed", 
+          pdf: false, 
+          note: `PDF 验证失败：${validation.error}` 
+        };
+      }
+    }
+    
     if (rec.kind === "url" && !rec.itemKey) {
       const existing = findSimilar("", rec.pdfUrl || rec.url, rec.title);
       const item = await registerUrl(rec.pdfUrl || rec.url, rec.title);
@@ -430,6 +448,60 @@ export async function importIdentifier(value: string, opts: { collectionId?: str
     };
   } catch (e: any) {
     return { input, ok: false, itemKey: "", title: "", action: "failed", pdf: false, note: String(e?.message || e).slice(0, 200) };
+  }
+}
+
+/**
+ * Validate that a PDF URL is accessible before importing.
+ * Uses a HEAD request or partial GET to check without downloading the full file.
+ */
+async function validatePdfAccessibility(url: string, signal?: AbortSignal): Promise<{ ok: boolean; error?: string }> {
+  try {
+    // Try HEAD first (faster, no body transfer)
+    const headCtrl = new AbortController();
+    const headTimer = setTimeout(() => headCtrl.abort(), 8000);
+    try {
+      const headRes = await fetch(url, { 
+        method: "HEAD", 
+        signal: signal || headCtrl.signal,
+        redirect: "follow"
+      });
+      clearTimeout(headTimer);
+      if (!headRes.ok) {
+        return { ok: false, error: `HTTP ${headRes.status} ${headRes.statusText}` };
+      }
+      const contentType = headRes.headers.get("content-type") || "";
+      if (contentType && !/pdf|octet-stream/i.test(contentType)) {
+        return { ok: false, error: `非 PDF 类型：${contentType}` };
+      }
+      return { ok: true };
+    } catch (e: any) {
+      clearTimeout(headTimer);
+      // HEAD failed, try partial GET with Range header
+      if (e.name !== "AbortError") {
+        const rangeCtrl = new AbortController();
+        const rangeTimer = setTimeout(() => rangeCtrl.abort(), 10000);
+        try {
+          const rangeRes = await fetch(url, {
+            method: "GET",
+            headers: { Range: "bytes=0-1023" },
+            signal: signal || rangeCtrl.signal,
+            redirect: "follow"
+          });
+          clearTimeout(rangeTimer);
+          if (!rangeRes.ok && rangeRes.status !== 206) {
+            return { ok: false, error: `HTTP ${rangeRes.status} ${rangeRes.statusText}` };
+          }
+          return { ok: true };
+        } catch (e2: any) {
+          clearTimeout(rangeTimer);
+          return { ok: false, error: `网络错误：${e2?.message || e2}` };
+        }
+      }
+      return { ok: false, error: "请求超时" };
+    }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) };
   }
 }
 
