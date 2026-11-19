@@ -23,7 +23,7 @@ export async function httpGet(url: string, init: RequestInit = {}, timeoutMs = 3
   const outer = init.signal;
   if (outer) outer.addEventListener("abort", () => ctrl.abort(), { once: true });
   try {
-    // Cross-origin GET/POST is routed through the Flask relay to sidestep browser CORS (see host.smartFetch).
+    // Cross-origin GET/POST is routed through the server-side relay to sidestep browser CORS (see host.smartFetch).
     return await smartFetch(url, { ...init, signal: ctrl.signal, headers: { "User-Agent": UA, ...((init.headers as any) || {}) } });
   } catch (e: any) {
     if (ctrl.signal.aborted && !outer?.aborted) throw new Error(`请求超时: ${url}`);

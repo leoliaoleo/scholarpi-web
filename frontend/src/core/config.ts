@@ -3,8 +3,10 @@
  *
  * Two key modes (see llm.ts):
  *   BYOK   - apiKey is filled in by the user and sent as Authorization.
- *   demo   - apiKey is empty; the Flask backend adds its own DEEPSEEK_API_KEY.
+ *   demo   - apiKey is empty; the Sites Function adds its own DEEPSEEK_API_KEY.
  */
+import { API_BASE } from "./host";
+
 const PREFIX = "scholarpi.";
 
 export interface QuickAction {
@@ -48,8 +50,8 @@ export interface Settings {
 
 const DEFAULTS: Omit<Settings, "quickActions"> = {
   apiKey: "",
-  // Path prefix served by backend/app.py; it appends /chat/completions, /models, /v1/tools/*.
-  baseUrl: "/api/llm",
+  // Same-origin proxy path: /functions/v1/app/llm on Sites, mirrored by backend/app.py locally.
+  baseUrl: `${API_BASE}/llm`,
   model: "deepseek-flash",
   thinkingLevel: "high",
   quickModel: "deepseek-flash",
@@ -97,8 +99,18 @@ export function getSettings(): Settings {
   out.apiKey = String(getPref<string>("apiKey") ?? "").trim();
   out.maxReadChars = Math.max(1000, Math.min(50000, Number(out.maxReadChars) || 8000));
   out.quickActions = parseQuickActions(getPref("quickActions"));
-  out.baseUrl = (out.baseUrl || DEFAULTS.baseUrl).trim().replace(/\/+$/, "");
+  out.baseUrl = normalizeBaseUrl(String(out.baseUrl || DEFAULTS.baseUrl));
   return out as Settings;
+}
+
+/**
+ * A relative baseUrl is a path on this origin, so it must be under the function
+ * base: builds before the Sites migration stored the obsolete `/api/llm`.
+ */
+function normalizeBaseUrl(raw: string): string {
+  const value = raw.trim().replace(/\/+$/, "");
+  if (!value || (/^\//.test(value) && !value.startsWith(API_BASE))) return DEFAULTS.baseUrl;
+  return value;
 }
 
 /** Absolute URL for the DeepSeek-compatible endpoint the pi SDK will call. */

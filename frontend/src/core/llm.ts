@@ -1,9 +1,10 @@
 /**
  * Model access for the pi engine.
  *
- * Requests go to the Flask proxy (`/api/llm`, a transparent path-prefix
- * forwarder), so the shared demo key never reaches the browser: in demo mode we
- * send the SENTINEL key and the backend swaps in its own DEEPSEEK_API_KEY.
+ * Requests go to the Sites Function proxy (`/functions/v1/app/llm`, a
+ * transparent path-prefix forwarder), so the shared demo key never reaches the
+ * browser: in demo mode we send the SENTINEL key and the function swaps in its
+ * own DEEPSEEK_API_KEY Secret.
  */
 import { createModels, type Api, type AssistantMessage, type Context, type Model } from "@earendil-works/pi-ai";
 import { deepseekProvider } from "@earendil-works/pi-ai/providers/deepseek";

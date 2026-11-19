@@ -1,13 +1,18 @@
-"""ScholarPi Web backend.
+"""ScholarPi Web — local development backend.
 
-Thin Flask layer around the browser-side pi Agent:
-  * hosts the built frontend (frontend/dist) so one process serves the whole app
-  * /api/llm/*      transparent DeepSeek passthrough (streaming) with a shared demo key
-  * /api/relay      GET-only CORS relay for arXiv / search engines / arbitrary pages
-  * /api/demo-papers  preset papers with pre-parsed per-page text
+The published app runs on Qoder Sites: a static frontend plus the Edge Function
+in ../functions. This Flask module is the local mirror of that split, so the same
+browser bundle works offline:
+
+  * hosts the built frontend (frontend/dist), including /papers — the bundled
+    demo papers with their pre-parsed per-page text
+  * /functions/v1/app/… (and the legacy /api/… aliases)
+      llm/*     transparent DeepSeek passthrough (streaming) with the shared demo key
+      relay     CORS relay for arXiv / search engines / arbitrary pages
+      health    demo-key availability + remaining quota
 
 The key in DEEPSEEK_API_KEY never reaches the browser: only its presence and the
-remaining quota are reported by /api/health.
+remaining quota are reported by the health route.
 """
 
 import json
@@ -92,20 +97,20 @@ class Quota:
             pass
 
     def check(self, key: str):
-        """Record an allowed request; return (allowed, retry_after, usage)."""
+        """Record an allowed request; return (allowed, retry_after, usage, exhausted_window)."""
         now = time.time()
         with self.lock:
             self.events = [(t, k) for t, k in self.events if now - t < 86400]
             if self.banned.get(key, 0) > now:
-                return False, int(self.banned[key] - now), self._usage(key)
+                return False, int(self.banned[key] - now), self._usage(key), "已临时限制"
             mine = sorted(t for t, k in self.events if k == key)
-            for window, cap in ((60, LIMIT_PER_MIN), (3600, LIMIT_PER_HOUR), (86400, LIMIT_PER_DAY)):
+            for window, cap, label in ((60, LIMIT_PER_MIN, f"每分钟 {LIMIT_PER_MIN} 次"), (3600, LIMIT_PER_HOUR, f"每小时 {LIMIT_PER_HOUR} 次"), (86400, LIMIT_PER_DAY, f"每天 {LIMIT_PER_DAY} 次")):
                 ev = [t for t in mine if now - t < window]
                 if len(ev) >= cap:
-                    return False, max(1, int(window - (now - ev[0])) + 1), self._usage(key)
+                    return False, max(1, int(window - (now - ev[0])) + 1), self._usage(key), label
             self.events.append((now, key))
             self._flush()
-            return True, 0, self._usage(key)
+            return True, 0, self._usage(key), ""
 
     def peek(self, key: str):
         """Report remaining quota without consuming any."""
@@ -194,11 +199,11 @@ def llm_proxy(subpath):
         if len(body) > MAX_PROMPT_CHARS * 6:
             quota.strike(client_key(), 600)
             return jsonify(error="payload_too_large", message="单次请求内容过长，请缩小阅读范围。"), 413
-        allowed, retry_after, usage = quota.check(client_key())
+        allowed, retry_after, usage, note = quota.check(client_key())
         if not allowed:
             resp = jsonify(
                 error="rate_limited",
-                message=f"公共演示额度已用完（每小时 {LIMIT_PER_HOUR} 次）。请稍后再试，或在设置中填入自己的 DeepSeek Key 继续不限次使用。",
+                message=f"公共演示额度已用完（{note}）。请稍后再试，或在设置中填入自己的 DeepSeek Key 继续不限次使用。",
                 retryAfter=retry_after,
                 usage=usage,
             )
@@ -569,6 +574,29 @@ def _static(filename):
         "<p>后端接口：<a href='/api/health'>/api/health</a></p>",
         200,
     )
+
+
+FUNCTION_PREFIX = "/functions/v1/app"
+
+
+def _mirror_api_routes():
+    """Expose every /api route under the Sites Function path too.
+
+    The published build calls /functions/v1/app/…; mirroring keeps one frontend
+    bundle for local development and for Qoder Sites.
+    """
+    for rule in list(app.url_map.iter_rules()):
+        if not rule.rule.startswith("/api/"):
+            continue
+        app.add_url_rule(
+            FUNCTION_PREFIX + rule.rule[len("/api"):],
+            endpoint="sites_" + rule.endpoint,
+            view_func=app.view_functions[rule.endpoint],
+            methods=sorted(rule.methods - {"HEAD", "OPTIONS"}),
+        )
+
+
+_mirror_api_routes()
 
 
 if __name__ == "__main__":

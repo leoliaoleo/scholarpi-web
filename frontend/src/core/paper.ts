@@ -5,7 +5,7 @@
  * original {libraryID, itemKey} shape.
  */
 import { arxivGet } from "./academic";
-import { apiJson, fetchBytes } from "./host";
+import { getHealth, PAPERS_BASE, fetchBytes, staticJson } from "./host";
 import * as db from "./db";
 import { dropDoc, getPagesText, hasDoc, loadDoc } from "./reader";
 import { detectHeadings, type Heading } from "./text";
@@ -32,8 +32,9 @@ export interface Paper {
   abstract: string;
   tags: string;
   source: "demo" | "upload" | "url";
-  /** demo papers: file names served by /api/demo-papers */
+  /** demo papers: file names shipped under /papers in the static bundle */
   pdfFile?: string;
+  textFile?: string;
   addedAt: number;
   totalPages?: number;
 }
@@ -96,6 +97,7 @@ function demoToPaper(d: DemoEntry): Paper {
     tags: "演示论文",
     source: "demo",
     pdfFile: d.pdfFile,
+    textFile: d.textFile,
     addedAt: 0,
     totalPages: d.totalPages,
   };
@@ -113,8 +115,12 @@ export async function loadRegistry(): Promise<void> {
 }
 
 async function fetchDemo(): Promise<{ papers: DemoEntry[]; demoKey: boolean }> {
-  const data = await apiJson<{ papers: DemoEntry[]; demoKey: boolean }>("demo-papers");
-  return { papers: data.papers || [], demoKey: !!data.demoKey };
+  // The catalogue is a static file; only the demo-key report needs the function.
+  const [papers, health] = await Promise.all([
+    staticJson<DemoEntry[]>(`${PAPERS_BASE}/manifest.json`),
+    getHealth().catch(() => null),
+  ]);
+  return { papers: Array.isArray(papers) ? papers : [], demoKey: !!health?.demoKey };
 }
 
 export function getItem(refOrKey: PaperRef | string | null | undefined): Paper | null {
@@ -269,9 +275,8 @@ async function pdfBytes(item: Paper): Promise<ArrayBuffer | null> {
   const key = paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
   try {
     if (item.source === "demo") {
-      const res = await fetch(`/api/demo-papers/${encodeURIComponent(item.itemKey)}/pdf`);
-      if (!res.ok) return null;
-      return await res.arrayBuffer();
+      if (!item.pdfFile) return null;
+      return await fetchAsset(`${PAPERS_BASE}/${encodeURIComponent(item.pdfFile)}`);
     }
     if (item.source === "upload") {
       const row = await db.get<{ bytes: ArrayBuffer }>("blobs", key);
@@ -285,6 +290,20 @@ async function pdfBytes(item: Paper): Promise<ArrayBuffer | null> {
     console.error("[ScholarPi] PDF 加载失败", e);
     return null;
   }
+}
+
+/** Bundled assets come off the CDN in one shot; a dropped connection is worth one retry. */
+async function fetchAsset(url: string, attempts = 2): Promise<ArrayBuffer | null> {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return await res.arrayBuffer();
+    } catch (e) {
+      if (i + 1 === attempts) throw e;
+    }
+  }
+  return null;
 }
 
 async function loadPdfBytes(item: Paper, bytes: ArrayBuffer): Promise<void> {
@@ -312,7 +331,7 @@ export async function getPaperText(item: Paper): Promise<PaperText> {
   let result: PaperText;
   if (item.source === "demo") {
     try {
-      const doc = await apiJson<{ pages: string[] }>(`demo-papers/${encodeURIComponent(item.itemKey)}/text`);
+      const doc = await staticJson<{ pages: string[] }>(`${PAPERS_BASE}/${encodeURIComponent(item.textFile || "")}`);
       const pages = (doc.pages || []).map((p) => p.replace(/\n{3,}/g, "\n\n").trim());
       result = { pages, headings: detectHeadings(pages), totalPages: pages.length, source: "demo" };
     } catch {

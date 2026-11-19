@@ -73,10 +73,14 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
     for (const k of [...pageInfos.keys()]) if (k.startsWith(`${docKey}:`)) pageInfos.delete(k);
     if (!docKey || !item) {
       setViewerState({ paperKey: docKey || null, currentPage: 1, pageCount: 0, loading: false });
+      refreshContext();
       void listAnnotationsFallback(null).then(setAnnotations);
       return;
     }
     setViewerState({ paperKey: docKey, loading: true });
+    // The chat panel follows the selection, not the parse: seed/load this paper's
+    // session now so a slow or failed PDF never leaves it on the previous paper.
+    refreshContext();
     setBusy("正在加载 PDF…");
     (async () => {
       try {
@@ -91,11 +95,11 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
         setViewerState({ pageCount: d.numPages, currentPage: 1, loading: false });
         if (!localStorage.getItem("scholarpi.zoom")) await fitWidth(d);
         setAnnotations(await listAnnotationsFallback(item));
-        refreshContext();
       } catch (e: any) {
         if (!cancelled) {
           setError(String(e?.message || e));
           setViewerState({ loading: false });
+          refreshContext();
         }
       } finally {
         if (!cancelled) setBusy("");

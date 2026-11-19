@@ -10,6 +10,7 @@ import { getItem, paperTitle, type Paper } from "../core/paper";
 import { gotoPage, paperKey as keyOf, refFromPaperKey, viewerState } from "../core/viewer-state";
 import { PanelApp, QuickApp } from "./chat";
 import { SettingsPanel } from "./settings";
+import { Tour } from "./tour";
 import { getApi, registerViewerHooks, subscribe } from "./api";
 import { Viewer } from "./viewer";
 
@@ -45,7 +46,7 @@ export function App() {
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
-  // papers: demo catalogue from Flask + the user's library from IndexedDB
+  // papers: demo catalogue from the static bundle + the user's library from IndexedDB
   const papers = useMemo(() => api.papers.list(), [tick, openKey]);
   const demo = papers.filter((p) => p.source === "demo");
   const mine = papers.filter((p) => p.source !== "demo");
@@ -140,9 +141,9 @@ export function App() {
         <div class="rail-head">
           <div class="logo">π</div>
           {!collapsed && (
-            <div class="brand">
+            <div class="brand" title="ScholarPi Web —— 科研文献智能体工作台">
               <b>ScholarPi Web</b>
-              <span class="muted small">浏览器端科研文献智能体</span>
+              <span class="muted small">科研文献智能体工作台</span>
             </div>
           )}
           <button
@@ -162,10 +163,10 @@ export function App() {
             <div class="key-state">
               <span
                 class={`dot ${health?.demoKey ? "ok" : health?.ok ? "warn" : "off"}`}
-                title={health?.demoKey ? "后端演示 Key 可用" : "未配置演示 Key"}
+                title={health?.demoKey ? "服务端演示 Key 可用" : "未配置演示 Key"}
               />
               <span class="small">
-                {health?.demoKey ? "演示 Key 可用" : health?.ok ? "需填入自己的 Key" : "后端未连接"}
+                {health?.demoKey ? "演示 Key 可用" : health?.ok ? "需填入自己的 Key" : "服务端未连接"}
               </span>
               <button class="chip" onClick={() => setShowSettings(true)}>
                 设置
@@ -173,7 +174,7 @@ export function App() {
             </div>
             {health && !health.demoKey && (
               <div class="mini-hint">
-                评委免 Key 体验需在后端设置环境变量 <code>DEEPSEEK_API_KEY</code>；也可在“设置”中填入自己的 Key。
+                免 Key 体验需配置服务端 Secret <code>DEEPSEEK_API_KEY</code>（本地开发：设置同名环境变量后重启 <code>python backend/app.py</code>）；也可在“设置”中填入自己的 Key。
               </div>
             )}
 
@@ -207,7 +208,7 @@ export function App() {
               items={demo}
               openKey={openKey}
               onOpen={open}
-              empty={demo.length ? "" : "未取到内置论文：请确认 Flask 后端已启动（python backend/app.py）"}
+              empty={demo.length ? "" : "未取到内置论文：请确认已运行 npm run build（论文随静态包 /papers 发布）"}
             />
           </div>
         )}
@@ -233,6 +234,8 @@ export function App() {
       <section class="pane pane-chat" style={{ width: `${chatW}px` }}>
         <PanelApp />
       </section>
+
+      <Tour />
 
       {showSettings && (
         <div class="modal" onMouseDown={(e) => e.target === e.currentTarget && setShowSettings(false)}>
@@ -343,7 +346,7 @@ function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: 
             <span class="sc-meta">仅存于本机浏览器（IndexedDB）</span>
           </button>
         </div>
-        {!demo.length && <p class="muted small">内置论文由后端 <code>/api/demo-papers</code> 提供：请先运行 <code>python backend/app.py</code>。</p>}
+        {!demo.length && <p class="muted small">内置论文来自静态资源 <code>/papers/manifest.json</code>：请先 <code>npm run build</code>，或直接上传自己的 PDF。</p>}
       </div>
     </div>
   );

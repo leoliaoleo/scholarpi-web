@@ -183,9 +183,10 @@ export function PanelApp() {
       setActiveId(null);
       return;
     }
+    const seeded = await api.seedPreset(c.ref);
     const list = clone(await api.sessions.list(c.ref));
     setSessions(list);
-    if (pickActive) setActiveId(await api.sessions.activeSessionId(c.ref, true));
+    if (pickActive) setActiveId(seeded || (await api.sessions.activeSessionId(c.ref, true)));
   }, []);
 
   useEffect(() => {
@@ -324,13 +325,13 @@ export function PanelApp() {
       )}
       {!settings.apiKey && health && !health.demoKey && (
         <div class="banner">
-          演示 Key 未配置：在后端设置 <code>DEEPSEEK_API_KEY</code>，或填入自己的 Key。
+          演示 Key 未配置：在服务端设置 Secret <code>DEEPSEEK_API_KEY</code>，或填入自己的 Key。
           <button class="link-btn" onClick={() => api.openSettings()}>
             打开设置
           </button>
         </div>
       )}
-      {!settings.apiKey && health?.demoKey && <div class="banner info">正在使用后端演示 Key（{health.limitNote || "有调用次数限制"}）；填入自己的 Key 可解除限制。</div>}
+      {!settings.apiKey && health?.demoKey && <div class="banner info">正在使用服务端演示 Key（{health.limitNote || "有调用次数限制"}）；填入自己的 Key 可解除限制。</div>}
       <AutoScroll dep={snap ? `${snap.version}:${textOf(snap.streaming).length}:${JSON.stringify(snap.streaming?.content?.length)}` : 0}>
         {snap ? (
           <MessageList

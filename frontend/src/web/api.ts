@@ -24,6 +24,7 @@ import {
   type PaperRef,
 } from "../core/paper";
 import { QuickService, IMAGE_ACTIONS } from "../core/quick";
+import { seedPreset as seedPresetSession } from "../core/presets";
 import { SessionManager } from "../core/sessions";
 import { gotoPage, highlightRects, paperKey, refFromPaperKey, setViewerState, viewerState } from "../core/viewer-state";
 
@@ -119,6 +120,9 @@ const api = {
     remove: removePaper,
     annotations: (itemKey: string) => listAnnotations(getItem(makeRef(itemKey)) as Paper),
   },
+
+  /** First visit to a demo paper: load its built-in close-reading session. */
+  seedPreset: (ref: PaperRef) => seedPresetSession(ref),
 
   openPaper: openItemKey,
 

@@ -1,13 +1,17 @@
 /**
- * The only place that talks to the Flask backend.
+ * The only place that talks to the server side.
  *
- * Everything same-origin (LLM proxy, demo papers, health) is fetched directly;
- * every third-party URL goes through /api/relay, which is what removes the
- * CORS limitation the browser version would otherwise hit (arXiv, search
- * engines, arbitrary pages).
+ * Everything is same-origin: the Qoder Sites Function lives under
+ * `/functions/v1/app` (backend/app.py mirrors the same routes for local Flask
+ * development). The LLM proxy and demo papers are fetched directly; every
+ * third-party URL goes through `<base>/relay`, which is what removes the CORS
+ * limitation the browser version would otherwise hit (arXiv, search engines,
+ * arbitrary pages). The built-in papers themselves are static files.
  */
 
-export const API_BASE = "/api";
+export const API_BASE = "/functions/v1/app";
+/** Static home of the bundled demo papers (manifest, page text, PDFs). */
+export const PAPERS_BASE = "/papers";
 
 export function apiUrl(sub: string): string {
   return `${API_BASE}/${sub.replace(/^\/+/, "")}`;
@@ -129,6 +133,13 @@ export async function apiJson<T = any>(sub: string, init?: RequestInit): Promise
   return data as T;
 }
 
+/** JSON from a file shipped in the static bundle (no function round-trip). */
+export async function staticJson<T = any>(path: string): Promise<T> {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
 // ---------------------------------------------------------------------------
 // backend status (demo key availability, quota)
 
@@ -138,8 +149,7 @@ export interface Health {
   defaultModel: string;
   upstream: string;
   relay: boolean;
-  demoPapers: number;
-  usage: Record<string, number>;
+  usage?: Record<string, number>;
   limitNote?: string;
 }
 

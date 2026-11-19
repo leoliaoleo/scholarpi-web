@@ -34,6 +34,16 @@ async function vendor() {
   await copy(join(NM, "katex/dist/fonts"), join(OUT, "vendor/katex/fonts"));
 }
 
+/**
+ * The bundled demo papers ship as static files (manifest + per-page text index +
+ * PDF), so a published site needs no server to open them.
+ */
+async function papers() {
+  const src = join(ROOT, "backend", "data", "demo_papers");
+  if (!existsSync(src)) throw new Error(`missing demo papers: ${src}`);
+  await copy(src, join(OUT, "papers"));
+}
+
 /** Stamp the bundle hash into index.html: rebuilt assets keep the same URL, so
  *  without this a browser (or a CDN) can serve yesterday's main.js. */
 async function stamp() {
@@ -56,6 +66,7 @@ async function run() {
   await rm(OUT, { recursive: true, force: true });
   await mkdir(join(OUT, "assets"), { recursive: true });
   await vendor();
+  await papers();
 
   const options = {
     absWorkingDir: ROOT,

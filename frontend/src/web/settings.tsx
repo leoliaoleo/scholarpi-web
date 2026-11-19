@@ -71,13 +71,13 @@ export function SettingsPanel() {
 
       <section>
         <h2>模型与 API</h2>
-        <Field label="DeepSeek API Key" hint="留空则使用后端演示 Key（DEEPSEEK_API_KEY）；填写后仅保存在本浏览器 localStorage。获取：platform.deepseek.com">
+        <Field label="DeepSeek API Key" hint="留空则使用服务端演示 Key（Qoder Sites Secret：DEEPSEEK_API_KEY，有次数限制）；填写后仅保存在本浏览器 localStorage。获取：platform.deepseek.com">
           <div class="row">
             <input type={showKey ? "text" : "password"} value={s.apiKey} placeholder="sk-..." onInput={(e) => set("apiKey", (e.target as HTMLInputElement).value.trim())} />
             <button onClick={() => setShowKey(!showKey)}>{showKey ? "隐藏" : "显示"}</button>
           </div>
         </Field>
-        <Field label="API 地址" hint="默认走后端代理 /api/llm，密钥不落前端">
+        <Field label="API 地址" hint="默认走服务端代理 /functions/v1/app/llm，密钥不落前端；也可填 https://api.deepseek.com 直连">
           <input value={s.baseUrl} onInput={(e) => set("baseUrl", (e.target as HTMLInputElement).value)} />
         </Field>
         <Field label="默认对话模型">
