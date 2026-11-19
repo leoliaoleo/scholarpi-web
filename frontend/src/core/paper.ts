@@ -237,6 +237,73 @@ export async function registerUrl(url: string, titleHint?: string): Promise<Pape
   return paper;
 }
 
+/**
+ * Register (or refresh) a library entry from externally resolved metadata — arXiv,
+ * Crossref, Semantic Scholar or a backup file. `itemKey` decides identity, so re-importing
+ * the same paper updates it instead of piling up duplicates.
+ */
+export async function registerMeta(meta: Partial<Paper> & { itemKey: string; title: string }): Promise<Paper> {
+  const existing = papers.get(meta.itemKey);
+  const paper: Paper = {
+    itemKey: meta.itemKey,
+    libraryID: LIBRARY_ID,
+    title: meta.title || existing?.title || "(未命名文献)",
+    authors: pick(meta.authors, existing?.authors || ""),
+    year: pick(meta.year, existing?.year || ""),
+    venue: pick(meta.venue, existing?.venue || ""),
+    DOI: pick(meta.DOI, existing?.DOI || ""),
+    url: pick(meta.url, existing?.url || ""),
+    pdfUrl: pick(meta.pdfUrl, existing?.pdfUrl || ""),
+    abstract: pick(meta.abstract, existing?.abstract || ""),
+    tags: pick(meta.tags, existing?.tags || "") || "文献库",
+    source: meta.source || existing?.source || "url",
+    addedAt: existing?.addedAt || meta.addedAt || Date.now(),
+    totalPages: meta.totalPages ?? existing?.totalPages,
+  };
+  if (paper.source !== "demo") await db.put("papers", paper);
+  papers.set(paper.itemKey, paper);
+  return paper;
+}
+
+/** Update one record in place; demo papers stay as shipped (their overrides live in `cards`). */
+export async function patchPaper(itemKey: string, patch: Partial<Paper>): Promise<Paper | null> {
+  const item = papers.get(itemKey);
+  if (!item) return null;
+  const next = { ...item, ...patch, itemKey: item.itemKey, libraryID: LIBRARY_ID };
+  papers.set(itemKey, next);
+  if (next.source !== "demo") await db.put("papers", next);
+  return next;
+}
+
+/** Duplicate guard for imports: the same DOI, the same url or a near-identical title. */
+export function findSimilar(doi: string, url: string, title: string): Paper | null {
+  const d = doi.trim().toLowerCase();
+  if (d) for (const p of papers.values()) if (p.DOI && p.DOI.toLowerCase() === d) return p;
+  const u = normUrl(url);
+  if (u) for (const p of papers.values()) if (p.url && normUrl(p.url) === u) return p;
+  const t = titleKey(title);
+  if (t.length > 12) {
+    for (const p of papers.values()) if (titleKey(p.title) === t) return p;
+  }
+  return null;
+}
+
+function normUrl(s: string): string {
+  return String(s || "").toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/+$/, "").replace(/\.pdf$/, "");
+}
+
+function titleKey(s: string): string {
+  return String(s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "")
+    .slice(0, 60);
+}
+
+/** Empty and missing count as "no new information", so an old value survives a partial import. */
+function pick(value: string | undefined, fallback: string): string {
+  return value === undefined || value === "" ? fallback : value;
+}
+
 export async function removePaper(itemKey: string): Promise<void> {
   const item = papers.get(itemKey);
   if (item?.source !== "demo") await db.del("papers", itemKey);

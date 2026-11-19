@@ -10,6 +10,8 @@ import { getAnnotation, listAnnotations, locate } from "../core/annotate";
 import { getSettings, saveSettings as persistSettings } from "../core/config";
 import { Emitter, globalEvents } from "../core/events";
 import { getHealth, type Health } from "../core/host";
+import * as kb from "../core/library";
+import { builtinToolInfos, configuredServers, mcpStates, parseServers, refreshMcp } from "../core/mcp";
 import { listModels, testConnection } from "../core/llm";
 import {
   getItem,
@@ -25,6 +27,8 @@ import {
 } from "../core/paper";
 import { QuickService, IMAGE_ACTIONS } from "../core/quick";
 import { seedPreset as seedPresetSession } from "../core/presets";
+import { clearSelection, selectionChanges, selectedKeys, setSelection, toggleSelection } from "../core/selection";
+import { SKILLS, grabCandidates, lastSkillRun, runSkill } from "../core/skills";
 import { SessionManager } from "../core/sessions";
 import { gotoPage, highlightRects, paperKey, refFromPaperKey, setViewerState, viewerState } from "../core/viewer-state";
 
@@ -83,6 +87,16 @@ export function refreshContext(): void {
 function saveSettings(patch: any): void {
   persistSettings(patch);
   globalEvents.emit({ type: "settings-changed" });
+  // MCP rows change the tool list, so idle sessions are rebuilt (ensureMcp runs first).
+  if ("mcpBridge" in patch || "mcpServers" in patch) void rebuildAfterMcpChange();
+}
+
+async function rebuildAfterMcpChange(): Promise<void> {
+  try {
+    await sessions.refreshAll();
+  } finally {
+    globalEvents.emit({ type: "tools-changed", servers: mcpStates() });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +133,79 @@ const api = {
     addUrl: registerUrl,
     remove: removePaper,
     annotations: (itemKey: string) => listAnnotations(getItem(makeRef(itemKey)) as Paper),
+  },
+
+  /** 个人科研知识库：专题、标签、元数据卡片、全局检索、导入导出。 */
+  kb: {
+    /** 首次访问写入示范专题与演示论文卡片；库里已有数据时不做任何改动。 */
+    ensureSeeded: kb.ensureSeeded,
+    stats: kb.libraryStats,
+    collections: kb.listCollections,
+    createCollection: kb.createCollection,
+    updateCollection: kb.updateCollection,
+    deleteCollection: kb.deleteCollection,
+    addToCollection: kb.collectionAdd,
+    removeFromCollection: kb.collectionRemove,
+    collectionsOf: kb.collectionsOf,
+    tags: kb.tagsIndex,
+    paperTags: async (itemKey: string): Promise<string[]> => {
+      const item = getItem(itemKey);
+      if (!item) return [];
+      return kb.tagsOf(item, await kb.getCard(itemKey));
+    },
+    setTags: kb.setPaperTags,
+    /** All cards, so the list can show which papers still need one. */
+    cards: kb.listCards,
+    card: async (itemKey: string) => {
+      const item = getItem(itemKey);
+      return item ? kb.cardView(item) : null;
+    },
+    saveCard: kb.saveCard,
+    generateCard: kb.generateCard,
+    search: kb.searchLibrary,
+    importBlock: kb.importBlock,
+    importFiles: kb.importFiles,
+    /** 删除文献本体，并把它从专题/卡片里清理干净。 */
+    remove: kb.removeItem,
+    exportJson: kb.exportBackup,
+    exportBibtex: kb.exportBibtex,
+    importBackup: kb.importBackup,
+    download: kb.downloadText,
+  },
+
+  /** 科研 Skills 工具箱：技能自己抓数据，回答仍然走当前会话。 */
+  skills: {
+    list: () => SKILLS,
+    run: runSkill,
+    grab: grabCandidates,
+    last: lastSkillRun,
+  },
+
+  /** MCP：内置学术桥接器 + 用户自配的 HTTP/SSE 服务。 */
+  mcp: {
+    servers: configuredServers,
+    states: mcpStates,
+    parse: parseServers,
+    refresh: refreshMcp,
+    builtinTools: builtinToolInfos,
+    /** 设置面板的「连接并测试」：先落盘，再强制发现，最后把工具列表交给现有会话。 */
+    async apply(patch: any) {
+      persistSettings(patch);
+      globalEvents.emit({ type: "settings-changed" });
+      const report = await refreshMcp({ probe: true });
+      await sessions.refreshAll().catch((e) => console.warn("[ScholarPi] MCP 工具重建失败", e));
+      globalEvents.emit({ type: "tools-changed", servers: report.servers });
+      return report;
+    },
+  },
+
+  /** 左侧勾选的多篇文献（对比矩阵技能读取）。 */
+  selection: {
+    get: selectedKeys,
+    set: setSelection,
+    toggle: toggleSelection,
+    clear: clearSelection,
+    changes: selectionChanges,
   },
 
   /** First visit to a demo paper: load its built-in close-reading session. */

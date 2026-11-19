@@ -6,10 +6,11 @@ import { Agent, type AgentEvent, type ThinkingLevel } from "@earendil-works/pi-a
 import { getSettings } from "./config";
 import { Emitter, globalEvents } from "./events";
 import { clampThinking, completeText, getModel, streamFn } from "./llm";
+import { ensureMcp } from "./mcp";
 import { getItem, paperKey, paperTitle, type PaperRef } from "./paper";
 import { buildSystemPrompt } from "./prompt";
 import * as store from "./store";
-import { buildTools } from "./tools";
+import { buildTools, type ToolContext } from "./tools";
 import { modelSupportsImages, visionModelId } from "./vision";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
@@ -79,16 +80,7 @@ export class SessionRuntime {
         systemPrompt: buildSystemPrompt(ref),
         model,
         thinkingLevel: clampThinking(model, settings.thinkingLevel) as ThinkingLevel,
-        tools: buildTools({
-          paper: ref,
-          sessionId: meta.id,
-          lastUserText: () => this.lastUser,
-          currentModel: () => this.agent.state.model,
-          notify: (ev) => {
-            globalEvents.emit({ ...ev, sessionId: meta.id, libraryID: meta.libraryID, itemKey: meta.itemKey });
-            if (ev.type === "session-updated") void this.reloadMeta();
-          },
-        }),
+        tools: buildTools(this.contextFor(meta, ref)),
         messages,
       },
       streamFn,
@@ -97,6 +89,28 @@ export class SessionRuntime {
     });
     this.committed = clone(this.visibleMessages());
     this.agent.subscribe((e) => this.onEvent(e));
+  }
+
+  /**
+   * The tools an MCP server adds or removes are announced by re-assigning this list, which
+   * keeps the transcript: the agent compares it against the tools already declared.
+   */
+  private contextFor(meta: store.SessionMeta, ref: PaperRef): ToolContext {
+    return {
+      paper: ref,
+      sessionId: meta.id,
+      lastUserText: () => this.lastUser,
+      currentModel: () => this.agent.state.model,
+      notify: (ev) => {
+        globalEvents.emit({ ...ev, sessionId: meta.id, libraryID: meta.libraryID, itemKey: meta.itemKey });
+        if (ev.type === "session-updated") void this.reloadMeta();
+      },
+    };
+  }
+
+  refreshTools(): void {
+    const ref: PaperRef = { libraryID: this.meta.libraryID, itemKey: this.meta.itemKey };
+    this.agent.state.tools = buildTools(this.contextFor(this.meta, ref));
   }
 
   /** Transcript without system messages (those are rebuilt on load). */
@@ -353,6 +367,7 @@ export class SessionManager {
     const messages = await store.loadMessages(id);
     rt = this.runtimes.get(id); // re-check after awaits
     if (rt) return rt;
+    await ensureMcp(); // the tool list is captured by the constructor
     rt = new SessionRuntime(meta, messages);
     this.runtimes.set(id, rt);
     return rt;
@@ -375,13 +390,15 @@ export class SessionManager {
     if (meta) globalEvents.emit({ type: "sessions-changed", libraryID: meta.libraryID, itemKey: meta.itemKey });
   }
 
-  /** Rebuild system prompts / tools after settings change (idle sessions only). */
-  refreshAll(): void {
+  /** Pick up new MCP tools: watched sessions swap their tool list, idle ones are dropped and rebuilt on open. */
+  async refreshAll(): Promise<void> {
+    await ensureMcp();
     for (const [id, rt] of this.runtimes) {
-      if (!rt.isStreaming && rt.changes.size === 0) {
+      if (rt.isStreaming) continue;
+      if (rt.changes.size === 0) {
         rt.dispose();
         this.runtimes.delete(id);
-      }
+      } else rt.refreshTools();
     }
   }
 

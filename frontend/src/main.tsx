@@ -3,6 +3,7 @@
  * workbench. Everything after this is ordinary Preact.
  */
 import { render } from "preact";
+import { ensureSeeded } from "./core/library";
 import { loadRegistry } from "./core/paper";
 import { openStore } from "./core/store";
 import { App } from "./web/app";
@@ -21,6 +22,8 @@ async function boot(): Promise<void> {
   }
   // pull the catalogue before the first paint, so the rail never flashes empty
   await loadRegistry().catch((e) => console.warn("[ScholarPi] 演示论文加载失败（后端未启动？）", e));
+  // first visit: the示范 collections + cards for the three demo papers (never overwrites real data)
+  await ensureSeeded().catch((e) => console.warn("[ScholarPi] 知识库示范数据未初始化", e));
   render(<App />, host);
 }
 

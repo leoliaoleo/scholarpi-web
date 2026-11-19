@@ -23,6 +23,20 @@ export const TOOL_LABELS: Record<string, string> = {
   arxiv_search: "arXiv 检索",
   arxiv_read: "阅读 arXiv",
   scholar_search: "Google Scholar",
+  kb_overview: "知识库概览",
+  kb_list: "列出知识库",
+  kb_create_collection: "新建研究专题",
+  kb_add_to_collection: "归入专题",
+  kb_set_tags: "设置标签",
+  kb_card: "读取元数据卡片",
+  kb_update_card: "更新元数据卡片",
+  kb_generate_card: "生成元数据卡片",
+  kb_search: "知识库检索",
+  kb_import: "导入文献",
+  kb_export: "导出知识库",
+  academic__arxiv_search: "学术桥接 · arXiv 检索",
+  academic__semantic_scholar_citations: "学术桥接 · 引用关系",
+  academic__fetch_paper_pdf: "学术桥接 · 抓取 PDF",
 };
 
 const TOOL_ICONS: Record<string, string> = {
@@ -46,14 +60,49 @@ const TOOL_ICONS: Record<string, string> = {
   arxiv_search: "🧪",
   arxiv_read: "🧪",
   scholar_search: "🎓",
+  kb_overview: "📚",
+  kb_list: "📚",
+  kb_create_collection: "🗂",
+  kb_add_to_collection: "🗂",
+  kb_set_tags: "🏷",
+  kb_card: "📋",
+  kb_update_card: "📋",
+  kb_generate_card: "📋",
+  kb_search: "🔭",
+  kb_import: "⇪",
+  kb_export: "⇩",
+  "academic__arxiv_search": "🧪",
+  "academic__semantic_scholar_citations": "🎓",
+  "academic__fetch_paper_pdf": "⇪",
 };
+
+/** MCP servers the user adds are named `server__tool`, so fall back to a readable form. */
+export function toolLabel(name: string): string {
+  return TOOL_LABELS[name] || (name.includes("__") ? `MCP · ${name.split("__").slice(1).join("__")}` : name);
+}
+
+export function toolIcon(name: string): string {
+  return TOOL_ICONS[name] || (name.startsWith("kb_") ? "📚" : name.includes("__") ? "🔌" : "🔧");
+}
 
 function argSummary(name: string, args: any): string {
   if (!args) return "";
   const v =
-    args.query ?? args.quote ?? args.section ?? (args.pages ? `p.${args.pages}` : undefined) ?? args.url ?? args.id ?? args.comment ?? args.session_id ?? args.item_key ?? (args.page ? `p.${args.page}` : "");
+    args.query ??
+    args.quote ??
+    args.section ??
+    (args.pages ? `p.${args.pages}` : undefined) ??
+    args.url ??
+    args.id ??
+    args.comment ??
+    args.session_id ??
+    args.item_key ??
+    (args.ids ? (Array.isArray(args.ids) ? args.ids.join(", ") : args.ids) : undefined) ??
+    args.collection ??
+    args.name ??
+    (args.page ? `p.${args.page}` : "");
   const s = String(v ?? "");
-  const extra = args.item_key && name.startsWith("paper_") ? ` [${args.item_key}]` : "";
+  const extra = args.item_key && (name.startsWith("paper_") || name.startsWith("kb_")) ? ` [${args.item_key}]` : "";
   return (s.length > 60 ? s.slice(0, 60) + "…" : s) + extra;
 }
 
@@ -101,8 +150,8 @@ function ToolCallView({ call, result, pending, active, preparing }: { call: any;
   return (
     <div class={`tool tool-${status}`}>
       <button class="tool-head" onClick={() => setOpen(!open)} title="展开 / 收起详情">
-        <span class="tool-icon">{TOOL_ICONS[call.name] || "🔧"}</span>
-        <span class="tool-name">{TOOL_LABELS[call.name] || call.name}</span>
+        <span class="tool-icon">{toolIcon(call.name)}</span>
+        <span class="tool-name">{toolLabel(call.name)}</span>
         <span class="tool-arg">{argSummary(call.name, call.arguments)}</span>
         {timeLabel && <span class="tool-time">{timeLabel}</span>}
         <span class="tool-status">

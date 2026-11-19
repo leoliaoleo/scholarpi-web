@@ -1,6 +1,8 @@
 /**
- * arXiv (API + HTML full text) and Google Scholar (with Semantic Scholar fallback).
+ * arXiv (API + HTML full text), Google Scholar (with Semantic Scholar fallback) and the
+ * identifier resolution the knowledge base imports papers through.
  */
+import { identifierKind } from "./library-util";
 import { domToText, httpGet, parseHTML } from "./web";
 
 export interface ArxivEntry {
@@ -180,5 +182,194 @@ export async function scholarSearch(
       citedBy: p.citationCount,
       pdf: p.openAccessPdf?.url,
     })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// knowledge-base sources: Semantic Scholar records, Crossref DOIs, identifier resolution
+
+const S2_FIELDS = "title,authors,year,venue,abstract,citationCount,referenceCount,externalIds,openAccessPdf,tldr";
+
+function cleanDoi(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/^doi[:\s]+/i, "")
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .replace(/[),.;\]]+$/, "");
+}
+
+/** One Semantic Scholar record, or null when the id is unknown or the API is throttled. */
+export async function semanticPaper(id: string, signal?: AbortSignal): Promise<any | null> {
+  try {
+    const res = await httpGet(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(id)}?fields=${S2_FIELDS}`, { signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.paperId ? data : null;
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return null;
+  }
+}
+
+/** Graph edges for 文献侦察兵: who cites a paper, and what that paper builds on. */
+export async function semanticGraph(
+  id: string,
+  dir: "citations" | "references",
+  opts: { limit?: number; offset?: number; signal?: AbortSignal } = {},
+): Promise<any[]> {
+  const params = new URLSearchParams({
+    fields: "title,authors,year,venue,citationCount,externalIds",
+    limit: String(Math.min(opts.limit || 50, 500)),
+  });
+  if (opts.offset) params.set("offset", String(opts.offset));
+  const res = await httpGet(`https://api.semanticscholar.org/graph/v1/paper/${encodeURIComponent(id)}/${dir}?${params}`, {
+    signal: opts.signal,
+  });
+  if (!res.ok) throw new Error(`Semantic Scholar ${dir} HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.data || []).map((row: any) => row.citingPaper || row.citedPaper || row).filter(Boolean);
+}
+
+export async function semanticSearch(query: string, opts: { limit?: number; year?: string; signal?: AbortSignal } = {}): Promise<any[]> {
+  const params = new URLSearchParams({ query, limit: String(Math.min(opts.limit || 20, 100)), fields: S2_FIELDS });
+  if (opts.year) params.set("year", opts.year);
+  const res = await httpGet(`https://api.semanticscholar.org/graph/v1/paper/search?${params}`, { signal: opts.signal });
+  if (!res.ok) throw new Error(`Semantic Scholar search HTTP ${res.status}`);
+  const data = await res.json();
+  return data.data || [];
+}
+
+export interface CrossrefRecord {
+  title: string;
+  authors: string[];
+  year: string;
+  venue: string;
+  url: string;
+  pdf: string;
+}
+
+export async function crossrefDoi(doi: string, signal?: AbortSignal): Promise<CrossrefRecord | null> {
+  try {
+    const res = await httpGet(`https://api.crossref.org/works/${encodeURIComponent(cleanDoi(doi))}`, { signal });
+    if (!res.ok) return null;
+    const m = (await res.json())?.message;
+    if (!m) return null;
+    const link = (m.link || []).find((l: any) => /application\/pdf/i.test(String(l["content-type"] || l.type || "")));
+    const year = m.issued?.["date-parts"]?.[0]?.[0] || "";
+    return {
+      title: (m.title || [])[0] || "",
+      authors: (m.author || []).map((a: any) => [a.given, a.family].filter(Boolean).join(" ") || a.name || "").filter(Boolean),
+      year: String(year),
+      venue: (m["container-title"] || [])[0] || "",
+      url: m.URL || `https://doi.org/${cleanDoi(doi)}`,
+      pdf: link?.URL || "",
+    };
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    return null;
+  }
+}
+
+/** Everything the knowledge base needs to file one paper, whatever the user pasted. */
+export interface ExternalRecord {
+  itemKey: string;
+  title: string;
+  authors: string;
+  year: string;
+  venue: string;
+  DOI: string;
+  url: string;
+  pdfUrl: string;
+  abstract: string;
+  tags: string;
+  kind: "arxiv" | "doi" | "url";
+  hints: { tldr: string; keywords: string[]; citations: number; references: number };
+}
+
+function fromArxiv(e: ArxivEntry, id: string): ExternalRecord {
+  const stable = id.replace(/v\d+$/i, "");
+  return {
+    itemKey: stable,
+    title: e.title || `arXiv:${stable}`,
+    authors: (e.authors || []).join(", "),
+    year: (e.published || "").slice(0, 4),
+    venue: "arXiv",
+    DOI: `10.48550/arXiv.${stable}`,
+    url: e.abs || `https://arxiv.org/abs/${stable}`,
+    pdfUrl: e.pdf || `https://arxiv.org/pdf/${stable}`,
+    abstract: e.summary || "",
+    tags: ["arXiv", ...e.categories.slice(0, 1)].filter(Boolean).join(", "),
+    kind: "arxiv",
+    hints: { tldr: "", keywords: e.categories.slice(0, 5), citations: 0, references: 0 },
+  };
+}
+
+function enrich(rec: ExternalRecord, s2: any): void {
+  if (!s2) return;
+  rec.hints.tldr = s2.tldr || rec.hints.tldr;
+  rec.hints.citations = s2.citationCount || 0;
+  rec.hints.references = s2.referenceCount || 0;
+  const ext = s2.externalIds || {};
+  if (ext.DOI && !rec.DOI) rec.DOI = String(ext.DOI);
+  if (!rec.abstract && s2.abstract) rec.abstract = String(s2.abstract);
+  if (!rec.venue && s2.venue) rec.venue = String(s2.venue);
+  if (!rec.pdfUrl && /^https?:\/\//i.test(s2.openAccessPdf?.url || "")) rec.pdfUrl = s2.openAccessPdf.url;
+}
+
+/**
+ * arXiv id / arXiv link / DOI / plain link → one library-ready record. A bare link keeps an
+ * empty itemKey: the caller hashes it, because only the registry knows its own key format.
+ */
+export async function resolveExternal(value: string, signal?: AbortSignal): Promise<ExternalRecord> {
+  const raw = String(value || "").trim();
+  const kind = identifierKind(raw);
+  if (kind === "arxiv") {
+    const id = normalizeArxivId(raw);
+    const entry = await arxivGet(id, signal);
+    if (!entry) throw new Error(`arXiv 上找不到 ${id}`);
+    const rec = fromArxiv(entry, id);
+    enrich(rec, await semanticPaper(`ARXIV:${rec.itemKey}`, signal));
+    return rec;
+  }
+  if (kind === "doi") {
+    const doi = cleanDoi(raw);
+    const arxivInDoi = doi.match(/^10\.48550\/arxiv\.(\d{4}\.\d{4,5})/i);
+    if (arxivInDoi) {
+      const rec = await resolveExternal(arxivInDoi[1], signal);
+      rec.DOI = doi;
+      return rec;
+    }
+    const [cr, s2] = await Promise.all([crossrefDoi(doi, signal), semanticPaper(`DOI:${doi}`, signal)]);
+    if (!cr && !s2) throw new Error(`DOI ${doi} 没有返回元数据（Crossref 与 Semantic Scholar 都查不到）`);
+    const pdf = (/^https?:\/\//i.test(s2?.openAccessPdf?.url || "") && s2.openAccessPdf.url) || cr?.pdf || "";
+    return {
+      itemKey: `doi:${doi}`,
+      title: cr?.title || s2?.title || doi,
+      authors: cr?.authors?.length ? cr.authors.join(", ") : (s2?.authors || []).map((a: any) => a.name).join(", "),
+      year: String(cr?.year || s2?.year || ""),
+      venue: cr?.venue || s2?.venue || "",
+      DOI: doi,
+      url: cr?.url || s2?.url || `https://doi.org/${doi}`,
+      pdfUrl: /^https?:\/\//i.test(pdf) ? pdf : "",
+      abstract: s2?.abstract || "",
+      tags: "DOI",
+      kind: "doi",
+      hints: { tldr: s2?.tldr || "", keywords: [], citations: s2?.citationCount || 0, references: s2?.referenceCount || 0 },
+    };
+  }
+  const looksPdf = /\.pdf(?:$|[?#])/i.test(raw) || /openreview\.net\/pdf\?id=/i.test(raw);
+  return {
+    itemKey: "",
+    title: raw.replace(/^https?:\/\//, "").slice(0, 80),
+    authors: "",
+    year: "",
+    venue: "",
+    DOI: "",
+    url: looksPdf ? "" : raw,
+    pdfUrl: raw,
+    abstract: "",
+    tags: "链接添加",
+    kind: "url",
+    hints: { tldr: "", keywords: [], citations: 0, references: 0 },
   };
 }

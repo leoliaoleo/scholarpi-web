@@ -1,11 +1,12 @@
 /**
- * Minimal IndexedDB layer: sessions, messages, key/value, papers, annotations
- * and uploaded PDF bytes. Replaces the desktop version's SQLite file.
+ * Minimal IndexedDB layer: sessions, messages, key/value, papers, annotations,
+ * uploaded PDF bytes, plus the knowledge base (collections + metadata cards).
+ * Replaces the desktop version's SQLite file.
  */
 const DB_NAME = "scholarpi";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
-export const STORES = ["sessions", "messages", "kv", "papers", "annotations", "blobs"] as const;
+export const STORES = ["sessions", "messages", "kv", "papers", "annotations", "blobs", "collections", "cards"] as const;
 export type StoreName = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
@@ -31,6 +32,9 @@ export function openDB(): Promise<IDBDatabase> {
         a.createIndex("byPaper", ["libraryID", "itemKey"], { unique: false });
       }
       if (!db.objectStoreNames.contains("blobs")) db.createObjectStore("blobs", { keyPath: "id" });
+      // v2: the personal knowledge base
+      if (!db.objectStoreNames.contains("collections")) db.createObjectStore("collections", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("cards")) db.createObjectStore("cards", { keyPath: "itemKey" });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);

@@ -9,10 +9,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { getItem, paperTitle, prefetchPdf, type Paper } from "../core/paper";
 import { gotoPage, paperKey as keyOf, refFromPaperKey, viewerState } from "../core/viewer-state";
 import { PanelApp, QuickApp } from "./chat";
+import { LibraryRail } from "./library";
 import { SettingsPanel } from "./settings";
 import { Tour } from "./tour";
 import { getApi, registerViewerHooks, subscribe } from "./api";
 import { Viewer } from "./viewer";
+import { GraphView } from "./graph";
+import { loadGraph, ensurePresetGraph, type GraphData, type GraphNode } from "../core/graph";
 
 const api = getApi();
 
@@ -44,12 +47,16 @@ export function App() {
   const [showQuick, setShowQuick] = useState(() => !!api.quick.job);
   useEffect(() => subscribe(api.quick.changes, (j: any) => setShowQuick(!!j)), []);
 
+  // Graph mode
+  const [mode, setMode] = useState<"reading" | "graph">("reading");
+  const [graphData, setGraphData] = useState<GraphData | null>(null);
+  const [graphLoading, setGraphLoading] = useState(false);
+
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
   // papers: demo catalogue from the static bundle + the user's library from IndexedDB
   const papers = useMemo(() => api.papers.list(), [tick, openKey]);
   const demo = papers.filter((p) => p.source === "demo");
-  const mine = papers.filter((p) => p.source !== "demo");
   const openItem = openKey ? getItem(refFromPaperKey(openKey)) : null;
 
   const open = useCallback(async (item: Paper, page?: number) => {
@@ -64,6 +71,37 @@ export function App() {
     }
   }, []);
 
+  // Load graph data when switching to graph mode
+  const switchToGraph = useCallback(async () => {
+    setMode("graph");
+    setGraphLoading(true);
+    try {
+      await ensurePresetGraph();
+      const data = await loadGraph();
+      setGraphData(data);
+    } catch (e) {
+      console.error("[ScholarPi] Failed to load graph:", e);
+    } finally {
+      setGraphLoading(false);
+    }
+  }, []);
+
+  const switchToReading = useCallback(() => {
+    setMode("reading");
+  }, []);
+
+  const handleGraphNodeClick = useCallback((node: GraphNode) => {
+    console.log("[ScholarPi] Graph node clicked:", node);
+  }, []);
+
+  const handleGraphNavigate = useCallback(async (itemKey: string, page?: number) => {
+    const item = getItem(itemKey);
+    if (item) {
+      switchToReading();
+      await open(item, page);
+    }
+  }, [open, switchToReading]);
+
   useEffect(() => {
     registerViewerHooks({
       openPaper: (itemKey: string, page?: number) => {
@@ -75,6 +113,15 @@ export function App() {
     });
     void api.health().then(setHealth).catch(() => setHealth({ ok: false }));
   }, [open]);
+
+  // imports can come from the rail, the agent's tools or a skill's 一键入库 — refresh on all of them
+  useEffect(
+    () =>
+      subscribe(api.events, (e: any) => {
+        if (e.type === "library-changed" || e.type === "skill-imported") refresh();
+      }),
+    [refresh],
+  );
 
   const addFile = async (file: File) => {
     setBusy(`正在解析 ${file.name}…`);
@@ -90,24 +137,10 @@ export function App() {
     }
   };
 
-  const addUrl = async (url: string) => {
-    if (!url.trim()) return;
-    setBusy("正在获取文献…");
-    setError("");
-    try {
-      const item = await api.papers.addUrl(url.trim());
-      setOpenKey(keyOf({ libraryID: item.libraryID, itemKey: item.itemKey }));
-      refresh();
-    } catch (e: any) {
-      setError(String(e?.message || e));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const remove = async (item: Paper) => {
+  /** Removing one of the user's own papers also drops it from every collection and card. */
+  const removeMine = async (item: Paper) => {
     if (!confirm(`从文献库中移除《${paperTitle(item).slice(0, 30)}…》？批注会保留在浏览器中。`)) return;
-    await api.papers.remove(item.itemKey);
+    await api.kb.remove(item.itemKey);
     if (openKey.endsWith(`/${item.itemKey}`)) setOpenKey("");
     refresh();
   };
@@ -140,6 +173,17 @@ export function App() {
   return (
     <div class="workbench" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       <aside class={collapsed ? "rail collapsed" : "rail"}>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          hidden
+          onChange={(e) => {
+            const f = (e.target as HTMLInputElement).files?.[0];
+            if (f) void addFile(f);
+            (e.target as HTMLInputElement).value = "";
+          }}
+        />
         <div class="rail-head">
           <div class="logo">π</div>
           {!collapsed && (
@@ -147,6 +191,15 @@ export function App() {
               <b>ScholarPi Web</b>
               <span class="muted small">科研文献智能体工作台</span>
             </div>
+          )}
+          {!collapsed && (
+            <button
+              class={`icon-btn mode-toggle ${mode === "graph" ? "active" : ""}`}
+              title={mode === "graph" ? "切换到文献精读模式" : "切换到知识图谱模式"}
+              onClick={() => (mode === "graph" ? switchToReading() : void switchToGraph())}
+            >
+              {mode === "graph" ? "📖" : "🕸"}
+            </button>
           )}
           <button
             class="icon-btn"
@@ -180,44 +233,29 @@ export function App() {
               </div>
             )}
 
-            <div class="add-row">
-              <button class="primary" onClick={() => fileRef.current?.click()}>
-                上传 PDF
-              </button>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="application/pdf,.pdf"
-                hidden
-                onChange={(e) => {
-                  const f = (e.target as HTMLInputElement).files?.[0];
-                  if (f) void addFile(f);
-                  (e.target as HTMLInputElement).value = "";
-                }}
-              />
-            </div>
-            <UrlAdder onAdd={addUrl} busy={!!busy} />
+            <LibraryRail papers={papers} openKey={openKey} onOpen={open} onRemove={removeMine} onChanged={refresh} />
             {busy && (
               <div class="busy">
                 <span class="spinner" /> {busy}
               </div>
             )}
             {error && <div class="error-box">{error}</div>}
-
-            <PaperGroup title="我的文献" items={mine} openKey={openKey} onOpen={open} onRemove={remove} empty="上传 PDF 或粘贴 arXiv 链接" />
-            <PaperGroup
-              title="演示论文"
-              items={demo}
-              openKey={openKey}
-              onOpen={open}
-              empty={demo.length ? "" : "未取到内置论文：请确认已运行 npm run build（论文随静态包 /papers 发布）"}
-            />
           </div>
         )}
       </aside>
 
       <main class="pane pane-reader">
-        {openItem ? (
+        {mode === "graph" ? (
+          graphLoading ? (
+            <div class="graph-loading">
+              <span class="spinner" /> 加载知识图谱...
+            </div>
+          ) : graphData ? (
+            <GraphView data={graphData} onNodeClick={handleGraphNodeClick} onPaperNavigate={handleGraphNavigate} />
+          ) : (
+            <div class="graph-empty">图谱数据加载失败</div>
+          )
+        ) : openItem ? (
           <>
             <Viewer paperKey={openKey} onOpenFile={addFile} />
             {showQuick && (
@@ -250,80 +288,6 @@ export function App() {
         </div>
       )}
     </div>
-  );
-}
-
-function UrlAdder({ onAdd, busy }: { onAdd: (url: string) => void; busy: boolean }) {
-  const [url, setUrl] = useState("");
-  return (
-    <form
-      class="url-add"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (url.trim() && !busy) {
-          onAdd(url);
-          setUrl("");
-        }
-      }}
-    >
-      <input value={url} placeholder="arXiv ID / 链接，如 1706.03762" onInput={(e) => setUrl((e.target as HTMLInputElement).value)} />
-      <button class="icon-btn" type="submit" title="添加" disabled={busy}>
-        ＋
-      </button>
-    </form>
-  );
-}
-
-function PaperGroup({
-  title,
-  items,
-  openKey,
-  onOpen,
-  onRemove,
-  empty,
-}: {
-  title: string;
-  items: Paper[];
-  openKey: string;
-  onOpen: (item: Paper) => void;
-  onRemove?: (item: Paper) => void;
-  empty?: string;
-}) {
-  return (
-    <div class="group">
-      <div class="group-title">
-        {title}
-        <span class="muted">{items.length}</span>
-      </div>
-      {items.map((p) => (
-        <PaperCard key={p.itemKey} item={p} active={openKey.endsWith(`/${p.itemKey}`)} onOpen={onOpen} onRemove={onRemove} />
-      ))}
-      {!items.length && empty && <div class="group-empty">{empty}</div>}
-    </div>
-  );
-}
-
-function PaperCard({ item, active, onOpen, onRemove }: { item: Paper; active: boolean; onOpen: (i: Paper) => void; onRemove?: (i: Paper) => void }) {
-  const meta = [item.year, item.venue, item.totalPages ? `${item.totalPages} 页` : ""].filter(Boolean).join(" · ");
-  return (
-    <button class={active ? "paper active" : "paper"} onClick={() => onOpen(item)} title={item.title}>
-      <span class="p-title">{item.title}</span>
-      {item.authors && <span class="p-meta">{item.authors.split(",").slice(0, 2).join(", ")}{item.authors.split(",").length > 2 ? " 等" : ""}</span>}
-      {meta && <span class="p-meta muted">{meta}</span>}
-      {onRemove && (
-        <span
-          class="p-del"
-          role="button"
-          title="移除"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(item);
-          }}
-        >
-          ×
-        </span>
-      )}
-    </button>
   );
 }
 

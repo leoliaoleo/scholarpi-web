@@ -1,4 +1,5 @@
 import { useState } from "preact/hooks";
+import type { McpServerConfig, McpServerState } from "../core/mcp";
 import { clone, getApi } from "./api";
 
 const api = getApi();
@@ -205,6 +206,21 @@ export function SettingsPanel() {
         </div>
       </section>
 
+      <section>
+        <h2>个人知识库</h2>
+        <Field label="检索时启用语义扩展" hint="全局检索先让模型把提问扩成中英文关键词，再一起打分；关闭后只做关键词匹配（不消耗 Key，速度更快）">
+          <input type="checkbox" checked={s.kbSemantic} onChange={(e) => set("kbSemantic", (e.target as HTMLInputElement).checked)} />
+        </Field>
+        <Field label="导入后自动生成元数据卡片" hint="每导入一篇调用一次模型，填写「核心方法 / 数据集 / 关键指标 / 一句话总结」；关闭后可在卡片里随时点「让模型生成」">
+          <input type="checkbox" checked={s.kbAutoCard} onChange={(e) => set("kbAutoCard", (e.target as HTMLInputElement).checked)} />
+        </Field>
+        <div class="hint">
+          专题、标签、元数据卡片、批注与上传的 PDF 全部存在本浏览器的 IndexedDB 中，不会上传；换设备时用左侧「备份 → 导出 JSON」搬运（BibTeX 可直接进 LaTeX / Zotero）。
+        </div>
+      </section>
+
+      <McpSection s={s} set={set} />
+
       <footer>
         {status && <span class={status.ok ? "ok" : "err"}>{status.text}</span>}
         <button class="primary" onClick={save}>
@@ -215,3 +231,144 @@ export function SettingsPanel() {
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// MCP
+
+interface McpRow {
+  id: string;
+  label: string;
+  url: string;
+  transport: "http" | "sse";
+  headersText: string;
+  enabled: boolean;
+}
+
+function toRow(cfg: McpServerConfig): McpRow {
+  return {
+    id: cfg.id,
+    label: cfg.label === cfg.id ? "" : cfg.label,
+    url: cfg.url,
+    transport: cfg.transport === "sse" ? "sse" : "http",
+    headersText: Object.entries(cfg.headers || {})
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("; "),
+    enabled: cfg.enabled,
+  };
+}
+
+function fromRow(row: McpRow, i: number): Partial<McpServerConfig> & { id: string } {
+  const headers: Record<string, string> = {};
+  for (const part of row.headersText.split(/[;\n]+/)) {
+    const kv = part.match(/^\s*([^:\s][^:]*?)\s*:\s*(.+?)\s*$/);
+    if (kv) headers[kv[1]] = kv[2];
+  }
+  return {
+    id: row.id.trim() || `mcp${i + 1}`,
+    label: row.label.trim() || row.id.trim() || `MCP ${i + 1}`,
+    url: row.url.trim(),
+    transport: row.transport,
+    headers,
+    enabled: row.enabled,
+  };
+}
+
+function McpSection({ s, set }: { s: any; set: (k: string, v: any) => void }) {
+  const [rows, setRows] = useState<McpRow[]>(() => api.mcp.parse(s.mcpServers).map(toRow));
+  const [states, setStates] = useState<McpServerState[]>(() => clone(api.mcp.states()));
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const write = (next: McpRow[]) => {
+    setRows(next);
+    set("mcpServers", JSON.stringify(next.map(fromRow)));
+  };
+  const patch = (i: number, p: Partial<McpRow>) => write(rows.map((r, j) => (i === j ? { ...r, ...p } : r)));
+
+  const probe = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      // apply() persists first, so a row that was only just typed is the one being tested
+      const r = clone(await api.mcp.apply(s));
+      setStates(r.servers);
+      setNote({
+        ok: r.servers.every((x: McpServerState) => x.status !== "error"),
+        text: `已发现 ${r.toolCount} 个 MCP 工具：${r.servers.map((x: McpServerState) => `${x.label} ${x.status === "ready" ? "✓" : "✕"}`).join("，")}`,
+      });
+    } catch (e: any) {
+      setNote({ ok: false, text: String(e?.message || e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section>
+      <h2>MCP 服务配置</h2>
+      <Field label="内置学术桥接器" hint="默认开启：arxiv_search（论文检索）、semantic_scholar_citations（引用关系）、fetch_paper_pdf（PDF 直链）三个工具，经服务端白名单代理调用，无需任何 Key">
+        <input type="checkbox" checked={s.mcpBridge} onChange={(e) => set("mcpBridge", (e.target as HTMLInputElement).checked)} />
+      </Field>
+      {s.mcpBridge && (
+        <div class="mcp-tools">
+          {api.mcp
+            .builtinTools()
+            .map((t: any) => (
+              <div class="mcp-tool" key={t.name} title={t.description}>
+                <code>academic__{t.name}</code>
+                <span class="muted small">{String(t.description || "").split(/[。.!！]/)[0]}</span>
+              </div>
+            ))}
+        </div>
+      )}
+
+      <div class="hint">
+        接入自己的 MCP 服务（任何提供 Streamable HTTP 或旧版 SSE 端点的服务器），Pi 会把它的工具列进同一份工具表，工具名形如{" "}
+        <code>服务名__工具名</code>。请求由后端 <code>/app/mcp</code> 代理发出：线上站点只允许公网 https 端点，本地 <code>python backend/app.py</code> 可同时访问 127.0.0.1 的服务。
+      </div>
+
+      {rows.map((r, i) => (
+        <div class="mcp-row" key={i}>
+          <label class="mcp-toggle" title="启用/停用">
+            <input type="checkbox" checked={r.enabled} onChange={(e) => patch(i, { enabled: (e.target as HTMLInputElement).checked })} />
+          </label>
+          <input class="mcp-id" value={r.id} placeholder="标识，如 mylab" onInput={(e) => patch(i, { id: (e.target as HTMLInputElement).value })} />
+          <input value={r.label} placeholder="显示名（可选）" onInput={(e) => patch(i, { label: (e.target as HTMLInputElement).value })} />
+          <select value={r.transport} onChange={(e) => patch(i, { transport: (e.target as HTMLSelectElement).value as "http" | "sse" })}>
+            <option value="http">Streamable HTTP</option>
+            <option value="sse">SSE</option>
+          </select>
+          <input class="mcp-url" value={r.url} placeholder="https://mcp.example.com/mcp" onInput={(e) => patch(i, { url: (e.target as HTMLInputElement).value })} />
+          <input class="mcp-headers" value={r.headersText} placeholder="请求头：Authorization: Bearer xxx（多个用 ; 分隔）" onInput={(e) => patch(i, { headersText: (e.target as HTMLInputElement).value })} />
+          <button onClick={() => write(rows.filter((_, j) => j !== i))}>删除</button>
+        </div>
+      ))}
+      <div class="row">
+        <button onClick={() => write([...rows, { id: "", label: "", url: "", transport: "http", headersText: "", enabled: true }])}>添加 MCP 服务</button>
+        <button class="primary" onClick={() => void probe()} disabled={busy}>
+          {busy ? "连接中…" : "连接并测试"}
+        </button>
+        {note && <span class={note.ok ? "ok" : "err"}>{note.text}</span>}
+      </div>
+
+      {!!states.filter((x) => x.transport !== "builtin").length && (
+        <div class="mcp-tools">
+          {states
+            .filter((x) => x.transport !== "builtin")
+            .map((x) => (
+              <div class={x.status === "ready" ? "mcp-tool ok" : "mcp-tool err"} key={x.id} title={x.error || x.url}>
+                <code>
+                  {x.label} · {x.status === "ready" ? `${x.tools.length} 个工具` : "连接失败"}
+                </code>
+                <span class="muted small">{x.status === "ready" ? x.tools.map((t) => t.name).join(", ") : x.error}</span>
+              </div>
+            ))}
+        </div>
+      )}
+      <div class="hint">
+        直接编辑配置也可以：把 JSON 数组写进 <code>localStorage.scholarpi.mcpServers</code>，形如{" "}
+        <code>{'[{"id":"mylab","url":"https://mcp.example.com/mcp","transport":"http","headers":{"Authorization":"Bearer ..."}}]'}</code>。密钥只存在这台浏览器的本地设置里。
+      </div>
+    </section>
+  );
+}

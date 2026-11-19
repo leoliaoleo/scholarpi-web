@@ -66,7 +66,7 @@ async function assertPublic(u: URL): Promise<string | null> {
   return null;
 }
 
-async function safeTarget(raw: string): Promise<{ url: URL | null; error: string }> {
+export async function safeTarget(raw: string): Promise<{ url: URL | null; error: string }> {
   let value = (raw || "").trim();
   if (!value) return { url: null, error: "缺少 url 参数" };
   if (value.startsWith("//")) value = `https:${value}`;

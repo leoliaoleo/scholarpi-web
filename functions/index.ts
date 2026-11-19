@@ -7,6 +7,7 @@
  *   chat/completions  explicit streaming alias
  *   relay             cross-origin GET/POST fetch (arXiv, search, pages, PDFs)
  *   search/arxiv      named arXiv entry point
+  mcp               JSON-RPC bridge to visitor-configured MCP servers
  *
  * The built-in demo papers are static files (/papers/…), so this function only
  * handles what a browser cannot do by itself. Locally, backend/app.py serves the
@@ -16,11 +17,12 @@ import { DEFAULT_MODEL, LIMIT_PER_DAY, LIMIT_PER_HOUR, LIMIT_PER_MIN, UPSTREAM, 
 import { apiError, json } from "./http.ts";
 import { handleLlm } from "./llm.ts";
 import { handleArxiv, handleRelay } from "./relay.ts";
+import { handleMcp } from "./mcp.ts";
 import { clientKey, peek } from "./quota.ts";
 
 declare const Deno: { serve: (handler: (req: Request) => Promise<Response> | Response) => unknown };
 
-const KNOWN = new Set(["health", "llm", "chat", "relay", "search"]);
+const KNOWN = new Set(["health", "llm", "chat", "relay", "search", "mcp"]);
 
 interface Route {
   name: string;
@@ -71,6 +73,8 @@ export async function handler(req: Request): Promise<Response> {
         return health(req);
       case "relay":
         return await handleRelay(req);
+      case "mcp":
+        return await handleMcp(req);
       case "search":
         if (route.rest[0] === "arxiv" && req.method === "GET") return await handleArxiv(req);
         return apiError("not_found", "未知检索接口", 404);

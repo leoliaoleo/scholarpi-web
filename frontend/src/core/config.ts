@@ -45,6 +45,14 @@ export interface Settings {
   autoConclusion: boolean;
   /** Follow the agent: jump the reader when it calls go_to_page or cites a page. */
   autoFollow: boolean;
+  /** 知识库检索是否让模型先扩展查询（中英同义词），提升跨语言召回。 */
+  kbSemantic: boolean;
+  /** 导入文献后自动写结构化元数据卡片（会发起一次模型调用）。 */
+  kbAutoCard: boolean;
+  /** 内置学术 MCP 桥接器：arXiv 检索 / Semantic Scholar 引用 / PDF 抓取。 */
+  mcpBridge: boolean;
+  /** 用户自备 MCP 服务（Streamable HTTP / SSE），JSON 数组字符串，见 mcp.ts。 */
+  mcpServers: string;
   quickActions: QuickAction[];
 }
 
@@ -69,6 +77,10 @@ const DEFAULTS: Omit<Settings, "quickActions"> = {
   annotationTag: "AI",
   autoConclusion: true,
   autoFollow: true,
+  kbSemantic: true,
+  kbAutoCard: true,
+  mcpBridge: true,
+  mcpServers: "[]",
 };
 
 export function getPref<T = any>(key: string): T | undefined {

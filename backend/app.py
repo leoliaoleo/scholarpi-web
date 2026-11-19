@@ -9,6 +9,7 @@ browser bundle works offline:
   * /functions/v1/app/… (and the legacy /api/… aliases)
       llm/*     transparent DeepSeek passthrough (streaming) with the shared demo key
       relay     CORS relay for arXiv / search engines / arbitrary pages
+      mcp       JSON-RPC bridge to visitor-configured MCP servers
       health    demo-key availability + remaining quota
 
 The key in DEEPSEEK_API_KEY never reaches the browser: only its presence and the
@@ -441,6 +442,136 @@ def relay():
         "contentType": ctype,
         "text": text,
         "truncated": size > RELAY_MAX_BYTES,
+    }
+    return _cors(jsonify(out))
+
+
+# ---------------------------------------------------------------------------
+# MCP bridge (visitor-configured MCP servers)
+#
+# Same envelope as functions/mcp.ts: the browser posts {endpoint, body, headers}
+# and this server performs the JSON-RPC call. The local dev server additionally
+# allows a loopback MCP endpoint (the user's own machine, e.g. `npx …` on
+# 127.0.0.1:8931); the published Edge Function refuses private addresses.
+
+MCP_ALLOWED_METHODS = {"initialize", "tools/list", "tools/call", "ping", "notifications/initialized"}
+MCP_DENY_HEADERS = {
+    "host", "content-length", "cookie", "set-cookie", "x-forwarded-for", "x-real-ip",
+    "connection", "keep-alive", "upgrade", "te", "trailer", "transfer-encoding",
+    "proxy-authorization", "via", "route", "loopback",
+}
+MCP_MAX_BYTES = 128 * 1024
+MCP_MAX_HEADERS = 16
+
+
+def _safe_mcp_target(raw):
+    if not raw:
+        return None, "缺少 endpoint"
+    if raw.startswith("//"):
+        raw = "https:" + raw
+    try:
+        u = urlparse(raw)
+    except ValueError:
+        return None, "URL 无法解析"
+    if u.scheme not in ("http", "https"):
+        return None, "只允许 http/https"
+    if not u.hostname:
+        return None, "URL 缺少主机名"
+    if u.username or u.password:
+        return None, "URL 不能包含凭据"
+    host = u.hostname.lower()
+    if host in {"metadata.google.internal", "metadata", "instance-data"} or host.endswith(".local"):
+        return None, "该地址不允许访问"
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return u.geturl(), None
+    if ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+        return None, "出于安全考虑，不能访问该地址"
+    return u.geturl(), None
+
+
+def _mcp_headers(raw):
+    out = {}
+    for name, value in (raw or {}).items():
+        if len(out) >= MCP_MAX_HEADERS:
+            break
+        low = str(name).lower()
+        if low in MCP_DENY_HEADERS or not all(0x21 <= ord(c) <= 0x7E for c in low):
+            continue
+        if isinstance(value, str) and len(value) <= 1024:
+            out[name] = value
+    return out
+
+
+@app.route("/api/mcp", methods=["POST", "OPTIONS"])
+def mcp_bridge():
+    """POST {endpoint, body:JSON-RPC, headers?, protocolVersion?} -> {status, contentType, text}."""
+    if request.method == "OPTIONS":
+        return _cors(Response(status=204))
+    payload = request.get_json(silent=True) or {}
+    endpoint = str(payload.get("endpoint") or "").strip()
+    body = payload.get("body")
+    if not endpoint:
+        return _cors(jsonify(error="bad_request", message="缺少 endpoint")), 400
+    if not isinstance(body, dict):
+        return _cors(jsonify(error="bad_request", message="缺少 JSON-RPC body")), 400
+    method = str(body.get("method") or "")
+    if method not in MCP_ALLOWED_METHODS:
+        return _cors(jsonify(error="bad_request", message=f"不支持的 MCP 方法：{method or '(空)'}")), 400
+    target, err = _safe_mcp_target(endpoint)
+    if err:
+        return _cors(jsonify(error="blocked", message=err)), 400
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "User-Agent": UA,
+        "MCP-Protocol-Version": str(payload.get("protocolVersion") or "2024-11-05"),
+    }
+    headers.update(_mcp_headers(payload.get("headers")))
+    session, url, resp = requests.Session(), target, None
+    for _ in range(3):
+        try:
+            resp = session.post(
+                url,
+                headers=headers,
+                data=json.dumps(body).encode("utf-8"),
+                timeout=RELAY_TIMEOUT,
+                stream=True,
+                allow_redirects=False,
+            )
+        except requests.RequestException as e:
+            return _cors(jsonify(error="fetch_failed", message=f"MCP 调用失败：{e.__class__.__name__}")), 502
+        if resp.status_code in (301, 302, 303, 307, 308):
+            nxt = resp.headers.get("Location")
+            resp.close()
+            if not nxt:
+                break
+            url, err = _safe_mcp_target(urljoin(url, nxt))
+            if err:
+                return _cors(jsonify(error="blocked", message=f"重定向被拒绝：{err}")), 400
+            continue
+        break
+
+    assert resp is not None
+    ctype = resp.headers.get("Content-Type", "")
+    chunks, size = [], 0
+    for chunk in resp.iter_content(chunk_size=65536):
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > MCP_MAX_BYTES:
+            break
+    resp.close()
+    if size > MCP_MAX_BYTES:
+        return _cors(jsonify(error="too_large", message="MCP 响应超过大小限制")), 413
+    out = {
+        "ok": 200 <= resp.status_code < 300,
+        "status": resp.status_code,
+        "contentType": ctype,
+        "text": b"".join(chunks).decode("utf-8", errors="replace"),
+        "sessionId": resp.headers.get("Mcp-Session-Id", "") or resp.headers.get("mcp-session-id", "") or "",
+        "protocolVersion": resp.headers.get("MCP-Protocol-Version", "") or "",
     }
     return _cors(jsonify(out))
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import { clone, getApi, subscribe } from "./api";
 import { ActivityBar, AutoScroll, Composer, MessageList, Thumb, textOf } from "./components";
 import { Markdown } from "./markdown";
+import { SkillBox } from "./skills";
 
 const api = getApi();
 
@@ -164,7 +165,7 @@ export function PanelApp() {
   const [attachments, setAttachments] = useState<any[]>([]);
   const [renaming, setRenaming] = useState(false);
   const [showConclusion, setShowConclusion] = useState(false);
-  const [toast, setToast] = useState<{ text: string; key?: string; libraryID?: number } | null>(null);
+  const [toast, setToast] = useState<{ text: string; key?: string; libraryID?: number; icon?: string } | null>(null);
   const [health, setHealth] = useState<any>(null);
   const { settings, models } = useSettings();
   const { snap, runtime } = useSession(activeId);
@@ -240,6 +241,14 @@ export function PanelApp() {
     }
     const img = clone(await api.captureRegion());
     if (img) setAttachments((a) => [...a, img]);
+  };
+  const notify = useCallback((text: string, icon = "💡") => {
+    setToast({ text, icon });
+    setTimeout(() => setToast(null), 4500);
+  }, []);
+  /** A skill's prompt goes in as-is: no pending 划词 quote or screenshot should ride along. */
+  const sendPrompt = (text: string) => {
+    if (runtime) void runtime.send(text);
   };
   const send = (text: string) => {
     if (!runtime) return;
@@ -363,11 +372,12 @@ export function PanelApp() {
       </AutoScroll>
       {toast && (
         <div class="toast" onClick={() => toast.key && api.openAnnotation(toast.libraryID ?? 1, toast.key)}>
-          🖍 {toast.text}
+          {toast.icon ?? "🖍"} {toast.text}
           {toast.key && <span class="muted"> · 点击查看</span>}
         </div>
       )}
       <ActivityBar snap={snap} />
+      <SkillBox ctx={ctx} runtime={runtime} busy={!!snap?.isStreaming} onSend={sendPrompt} notify={(t) => notify(t, "🧪")} />
       <Composer
         busy={!!snap?.isStreaming}
         onSend={send}
