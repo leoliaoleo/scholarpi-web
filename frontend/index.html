@@ -16,6 +16,8 @@
     <meta property="og:type" content="website" />
     <link rel="stylesheet" href="/vendor/katex/katex.min.css" />
     <link rel="stylesheet" href="/assets/styles/app.css" />
+    <!-- Same-origin pdf.js worker, fetched during boot instead of after the whole PDF downloads. -->
+    <link rel="modulepreload" href="/vendor/pdf.worker.min.mjs" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>π</text></svg>" />
   </head>
   <body>

@@ -290,7 +290,14 @@ code {
   height: 70%;
   padding: calc(20px * var(--site-space, 1));
 }
-.viewer-empty .error-box { max-width: 460px; }
+.viewer-empty .error-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(10px * var(--site-space, 1));
+  max-width: 460px;
+  text-align: center;
+}
 .page {
   position: relative;
   background: #fff;

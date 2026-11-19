@@ -5,7 +5,7 @@
  * original {libraryID, itemKey} shape.
  */
 import { arxivGet } from "./academic";
-import { getHealth, PAPERS_BASE, fetchBytes, staticJson } from "./host";
+import { getHealth, PAPERS_BASE, download, fetchBytes, staticJson, type ProgressFn } from "./host";
 import * as db from "./db";
 import { dropDoc, getPagesText, hasDoc, loadDoc } from "./reader";
 import { detectHeadings, type Heading } from "./text";
@@ -260,50 +260,92 @@ function hashKey(s: string): string {
 // ---------------------------------------------------------------------------
 // PDF bytes → pdf.js document
 
-/** Make sure reader.ts has a parsed document for this paper; false if none exists. */
-export async function ensurePdf(item: Paper): Promise<boolean> {
+function refKey(item: Paper): string {
+  return paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
+}
+
+/**
+ * One download + parse per paper, whoever asks first: the rail starts it on click so the
+ * bytes are already moving while the chat panel finishes rendering, and the reader joins
+ * the same task instead of issuing a second request.
+ */
+const pdfTasks = new Map<string, Promise<boolean>>();
+const pdfProgress = new Map<string, Set<ProgressFn>>();
+const pdfLastChunk = new Map<string, { received: number; total: number }>();
+
+function emitProgress(key: string): ProgressFn {
+  return (received, total) => {
+    pdfLastChunk.set(key, { received, total });
+    for (const fn of pdfProgress.get(key) || []) fn(received, total);
+  };
+}
+
+function pdfTask(item: Paper): Promise<boolean> {
+  const key = refKey(item);
+  const running = pdfTasks.get(key);
+  if (running) return running;
+  pdfProgress.set(key, new Set());
+  const task = (async () => {
+    const bytes = await pdfBytes(item, emitProgress(key));
+    if (!bytes) return false;
+    await loadPdfBytes(item, bytes);
+    return true;
+  })().finally(() => {
+    pdfTasks.delete(key);
+    pdfProgress.delete(key);
+    pdfLastChunk.delete(key);
+  });
+  pdfTasks.set(key, task);
+  return task;
+}
+
+/** Warm the reader in the background; a failure is reported to whoever awaits the task. */
+export function prefetchPdf(item: Paper | null): void {
+  if (!item || hasPdfLoaded(item)) return;
+  void pdfTask(item).catch(() => undefined);
+}
+
+/** Make sure reader.ts has a parsed document; false only when the paper has no PDF at all. */
+export async function ensurePdf(item: Paper, onProgress?: ProgressFn): Promise<boolean> {
   if (!item) return false;
-  const key = paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
-  if (hasDoc(key)) return true;
-  const bytes = await pdfBytes(item);
-  if (!bytes) return false;
-  await loadPdfBytes(item, bytes);
-  return true;
-}
-
-async function pdfBytes(item: Paper): Promise<ArrayBuffer | null> {
-  const key = paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
+  const key = refKey(item);
+  if (hasDoc(key)) {
+    onProgress?.(1, 1);
+    return true;
+  }
+  const task = pdfTask(item);
+  const subs = onProgress ? pdfProgress.get(key) : undefined;
+  if (subs && onProgress) {
+    subs.add(onProgress);
+    const seen = pdfLastChunk.get(key);
+    if (seen) onProgress(seen.received, seen.total);
+  }
   try {
-    if (item.source === "demo") {
-      if (!item.pdfFile) return null;
-      return await fetchAsset(`${PAPERS_BASE}/${encodeURIComponent(item.pdfFile)}`);
-    }
-    if (item.source === "upload") {
-      const row = await db.get<{ bytes: ArrayBuffer }>("blobs", key);
-      if (row?.bytes) return row.bytes;
-      return null;
-    }
-    const target = item.pdfUrl || item.url;
-    if (!target) return null;
-    return await fetchBytes(target);
-  } catch (e) {
-    console.error("[ScholarPi] PDF 加载失败", e);
-    return null;
+    return await task;
+  } finally {
+    if (subs && onProgress) subs.delete(onProgress);
   }
 }
 
-/** Bundled assets come off the CDN in one shot; a dropped connection is worth one retry. */
-async function fetchAsset(url: string, attempts = 2): Promise<ArrayBuffer | null> {
-  for (let i = 0; i < attempts; i++) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return null;
-      return await res.arrayBuffer();
-    } catch (e) {
-      if (i + 1 === attempts) throw e;
-    }
+/**
+ * A transport failure throws (the reader shows it and offers a retry); null means this
+ * paper simply has no file behind it.
+ */
+async function pdfBytes(item: Paper, onProgress?: ProgressFn): Promise<ArrayBuffer | null> {
+  const key = paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
+  if (item.source === "demo") {
+    if (!item.pdfFile) return null;
+    return download(`${PAPERS_BASE}/${encodeURIComponent(item.pdfFile)}`, onProgress);
   }
-  return null;
+  if (item.source === "upload") {
+    const row = await db.get<{ bytes: ArrayBuffer }>("blobs", key);
+    if (!row?.bytes) return null;
+    onProgress?.(row.bytes.byteLength, row.bytes.byteLength);
+    return row.bytes;
+  }
+  const target = item.pdfUrl || item.url;
+  if (!target) return null;
+  return fetchBytes(target, onProgress);
 }
 
 async function loadPdfBytes(item: Paper, bytes: ArrayBuffer): Promise<void> {
@@ -349,7 +391,9 @@ export async function getPaperText(item: Paper): Promise<PaperText> {
 }
 
 async function fromPdf(item: Paper): Promise<PaperText> {
-  const ok = await ensurePdf(item);
+  // Text extraction keeps its old "no text" answer when the download itself fails;
+  // the reader is the place that reports transport errors to the visitor.
+  const ok = await ensurePdf(item).catch(() => false);
   if (!ok) return { pages: [], headings: [], totalPages: 0, source: "none" };
   const pages = (await getPagesText(paperKey({ libraryID: item.libraryID, itemKey: item.itemKey }))).map((p) =>
     p.replace(/\n{3,}/g, "\n\n").trim(),

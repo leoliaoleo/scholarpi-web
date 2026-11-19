@@ -107,23 +107,97 @@ async function relayToResponse(res: Response, url: string): Promise<Response> {
 }
 
 /** Binary download (PDF) through the relay, as an ArrayBuffer. */
-export async function fetchBytes(url: string): Promise<ArrayBuffer> {
-  if (canFetchDirect(url)) {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`下载失败：HTTP ${res.status}`);
-    return res.arrayBuffer();
-  }
-  const res = await fetch(`${apiUrl("relay")}?${relayParams(url, "bytes")}`);
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
+export function fetchBytes(url: string, onProgress?: ProgressFn): Promise<ArrayBuffer> {
+  const target = canFetchDirect(url) ? url : `${apiUrl("relay")}?${relayParams(url, "bytes")}`;
+  return download(target, onProgress);
+}
+
+// ---------------------------------------------------------------------------
+// progress-carrying download
+
+/** A transfer that stops answering is an error the visitor can retry, never a spinner. */
+const STALL_MS = 10_000;
+const ATTEMPTS = 3;
+
+export type ProgressFn = (received: number, total: number) => void;
+
+/**
+ * Download a buffer with byte progress, a stall guard and bounded retries.
+ *
+ * `STALL_MS` arms before the request and re-arms on every chunk, so a slow link that is
+ * still delivering keeps going while a dead one fails in ~10s. 4xx is a real answer
+ * (missing file, blocked host) and is reported at once instead of retried.
+ */
+export async function download(url: string, onProgress?: ProgressFn, init: RequestInit = {}): Promise<ArrayBuffer> {
+  let failure = new Error("下载失败");
+  for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    if (attempt) await sleep(400 * attempt);
+    const ctrl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => ctrl.abort(), STALL_MS);
+    };
     try {
-      msg = (await res.json()).message || msg;
-    } catch {
-      // keep the status text
+      arm();
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      if (!res.ok) {
+        failure = new Error(await failureMessage(res));
+        if (res.status >= 400 && res.status < 500) break;
+        continue;
+      }
+      arm();
+      return await readWithProgress(res, onProgress, arm);
+    } catch (e: any) {
+      failure = e?.name === "AbortError" ? new Error(`下载超时：${STALL_MS / 1000} 秒内没有响应`) : new Error(String(e?.message || e));
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
-    throw new Error(msg);
   }
-  return res.arrayBuffer();
+  throw failure;
+}
+
+async function readWithProgress(res: Response, onProgress: ProgressFn | undefined, arm: () => void): Promise<ArrayBuffer> {
+  const total = Number(res.headers.get("content-length") || 0);
+  if (!res.body) {
+    const buf = await res.arrayBuffer();
+    onProgress?.(buf.byteLength, buf.byteLength);
+    return buf;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    arm();
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    chunks.push(value);
+    received += value.byteLength;
+    onProgress?.(received, total);
+  }
+  const out = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out.buffer as ArrayBuffer;
+}
+
+async function failureMessage(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    if (data?.message) return String(data.message);
+    if (data?.error) return String(data.error);
+  } catch {
+    // no JSON body: the status is the message
+  }
+  return `HTTP ${res.status}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 export async function apiJson<T = any>(sub: string, init?: RequestInit): Promise<T> {

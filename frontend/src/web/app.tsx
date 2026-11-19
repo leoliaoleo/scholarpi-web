@@ -6,7 +6,7 @@
  * caller jumps to a page, so `[p. 5]` chips work on a cold paper too.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
-import { getItem, paperTitle, type Paper } from "../core/paper";
+import { getItem, paperTitle, prefetchPdf, type Paper } from "../core/paper";
 import { gotoPage, paperKey as keyOf, refFromPaperKey, viewerState } from "../core/viewer-state";
 import { PanelApp, QuickApp } from "./chat";
 import { SettingsPanel } from "./settings";
@@ -55,6 +55,8 @@ export function App() {
   const open = useCallback(async (item: Paper, page?: number) => {
     const key = keyOf({ libraryID: item.libraryID, itemKey: item.itemKey });
     setError("");
+    // Ask for the bytes inside the click, before the panels re-render around it.
+    prefetchPdf(item);
     setOpenKey(key);
     if (page) {
       await waitViewerReady(key);

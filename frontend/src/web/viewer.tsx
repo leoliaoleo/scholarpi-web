@@ -55,7 +55,9 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
   const [pulse, setPulse] = useState<{ pageIndex: number; rects: number[][]; keep: boolean } | null>(null);
   const [sel, setSel] = useState<{ info: SelInfo; left: number; top: number } | null>(null);
   const [regionOn, setRegionOn] = useState(false);
-  const [busy, setBusy] = useState("");
+  const [busy, setBusy] = useState<"" | "download" | "parse">("");
+  const [dl, setDl] = useState<{ r: number; t: number } | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [openAnn, setOpenAnn] = useState<{ ann: Annotation; left: number; top: number } | null>(null);
   const regionResolve = useRef<((img: any) => void) | null>(null);
 
@@ -81,13 +83,22 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
     // The chat panel follows the selection, not the parse: seed/load this paper's
     // session now so a slow or failed PDF never leaves it on the previous paper.
     refreshContext();
-    setBusy("正在加载 PDF…");
+    setBusy("download");
+    setDl(null);
+    let shown = -1;
+    const onProgress = (r: number, t: number) => {
+      if (cancelled) return;
+      const step = t ? Math.round((r / t) * 100) : Math.floor(r / 131_072);
+      if (step === shown && r !== t) return;
+      shown = step;
+      setDl({ r, t });
+    };
     (async () => {
       try {
-        const ok = await ensurePdf(item);
+        const ok = await ensurePdf(item, onProgress);
         if (cancelled) return;
         if (!ok) throw new Error("这篇文献没有可用的 PDF 文件");
-        setBusy("正在解析…");
+        setBusy("parse");
         const d = await getDoc(docKey);
         if (cancelled) return;
         if (!d) throw new Error("PDF 解析失败");
@@ -108,7 +119,7 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
     return () => {
       cancelled = true;
     };
-  }, [docKey, item?.itemKey]);
+  }, [docKey, item?.itemKey, attempt]);
 
   // annotations refresh whenever the agent (or the user) writes one
   useEffect(() => {
@@ -307,10 +318,16 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
         {!doc && (
           <div class="viewer-empty">
             {error ? (
-              <div class="error-box">PDF 加载失败：{error}</div>
+              <div class="error-box">
+                <div>PDF 加载失败：{error}</div>
+                <button class="primary" onClick={() => { setError(""); setAttempt((a) => a + 1); }}>
+                  点击重试
+                </button>
+                <p class="muted small">网络不稳时会自动重试；也可以稍后再点开左侧论文。</p>
+              </div>
             ) : busy ? (
               <p>
-                <span class="spinner" /> {busy}
+                <span class="spinner" /> {loadLabel(busy, dl)}
               </p>
             ) : (
               <>
@@ -381,6 +398,15 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
 
 function listAnnotationsFallback(item: Paper | null): Promise<Annotation[]> {
   return item ? listAnnotations(item).catch(() => [] as Annotation[]) : Promise.resolve([]);
+}
+
+/** Percentage when the size is known, transferred bytes when the server omits content-length. */
+function loadLabel(busy: string, dl: { r: number; t: number } | null): string {
+  if (busy === "parse") return "正在解析…";
+  if (busy !== "download") return "";
+  if (!dl) return "正在下载 PDF…";
+  if (!dl.t) return `正在下载 PDF（${Math.round(dl.r / 1024)} KB）…`;
+  return `正在下载 PDF（${Math.min(99, Math.round((dl.r / dl.t) * 100))}%）…`;
 }
 
 // ---------------------------------------------------------------------------
