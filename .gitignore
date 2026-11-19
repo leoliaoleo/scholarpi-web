@@ -1,0 +1,36 @@
+# --- node / frontend build -------------------------------------------------
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+.eslintcache
+
+# --- python / flask ---------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+
+# --- secrets & local config -------------------------------------------------
+# The public demo key lives only in the server environment: never commit it.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+server.log
+*.log
+
+# --- editors / OS -----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+
+# NOTE: backend/data/demo_papers/ (3 preset PDFs + pre-parsed text indexes) is
+# intentionally version-controlled — the app needs it with no extra setup step.

@@ -1,0 +1,141 @@
+/**
+ * Settings, persisted in localStorage (the desktop version used Zotero.Prefs).
+ *
+ * Two key modes (see llm.ts):
+ *   BYOK   - apiKey is filled in by the user and sent as Authorization.
+ *   demo   - apiKey is empty; the Flask backend adds its own DEEPSEEK_API_KEY.
+ */
+const PREFIX = "scholarpi.";
+
+export interface QuickAction {
+  id: string;
+  label: string;
+  /** Prompt template; {text} is replaced with the selected text. */
+  prompt: string;
+  /** "translate" runs a fast tool-less call; "agent" runs in the paper session. */
+  mode: "translate" | "agent";
+}
+
+export const DEFAULT_QUICK_ACTIONS: QuickAction[] = [
+  { id: "explain", label: "解释", mode: "agent", prompt: "请结合论文上下文解释下面这段内容（必要时查阅论文其他部分），说明其含义、作用以及涉及的关键概念：\n\n{text}" },
+  { id: "translate", label: "翻译", mode: "translate", prompt: "" },
+  { id: "summarize", label: "总结", mode: "agent", prompt: "请用简洁的要点总结下面这段内容的核心意思：\n\n{text}" },
+];
+
+export interface Settings {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  thinkingLevel: string;
+  quickModel: string;
+  extraModels: string;
+  targetLanguage: string;
+  replyLanguage: string;
+  customSystemPrompt: string;
+  maxReadChars: number;
+  searchEngine: "deepseek" | "duckduckgo" | "tavily" | "brave" | "searxng";
+  fetchEngine: "deepseek" | "local";
+  tavilyKey: string;
+  braveKey: string;
+  searxngUrl: string;
+  annotationColor: string;
+  annotationTag: string;
+  autoConclusion: boolean;
+  /** Follow the agent: jump the reader when it calls go_to_page or cites a page. */
+  autoFollow: boolean;
+  quickActions: QuickAction[];
+}
+
+const DEFAULTS: Omit<Settings, "quickActions"> = {
+  apiKey: "",
+  // Path prefix served by backend/app.py; it appends /chat/completions, /models, /v1/tools/*.
+  baseUrl: "/api/llm",
+  model: "deepseek-flash",
+  thinkingLevel: "high",
+  quickModel: "deepseek-flash",
+  extraModels: "",
+  targetLanguage: "简体中文",
+  replyLanguage: "简体中文",
+  customSystemPrompt: "",
+  maxReadChars: 8000,
+  searchEngine: "deepseek",
+  fetchEngine: "deepseek",
+  tavilyKey: "",
+  braveKey: "",
+  searxngUrl: "",
+  annotationColor: "#a28ae5",
+  annotationTag: "AI",
+  autoConclusion: true,
+  autoFollow: true,
+};
+
+export function getPref<T = any>(key: string): T | undefined {
+  try {
+    const raw = localStorage.getItem(PREFIX + key);
+    return raw === null ? undefined : (JSON.parse(raw) as T);
+  } catch {
+    return undefined;
+  }
+}
+
+export function setPref(key: string, value: any): void {
+  try {
+    localStorage.setItem(PREFIX + key, JSON.stringify(value));
+  } catch (e) {
+    console.error("[ScholarPi] cannot persist setting", key, e);
+  }
+}
+
+export function getSettings(): Settings {
+  const out: any = {};
+  for (const [k, def] of Object.entries(DEFAULTS)) {
+    const v = getPref(k);
+    out[k] = v === undefined || v === null || v === "" ? def : v;
+    if (typeof def === "string" && typeof out[k] !== "string") out[k] = String(out[k]);
+  }
+  // An empty apiKey is a valid choice: it means "use the shared demo key".
+  out.apiKey = String(getPref<string>("apiKey") ?? "").trim();
+  out.maxReadChars = Math.max(1000, Math.min(50000, Number(out.maxReadChars) || 8000));
+  out.quickActions = parseQuickActions(getPref("quickActions"));
+  out.baseUrl = (out.baseUrl || DEFAULTS.baseUrl).trim().replace(/\/+$/, "");
+  return out as Settings;
+}
+
+/** Absolute URL for the DeepSeek-compatible endpoint the pi SDK will call. */
+export function llmEndpoint(): string {
+  const base = getSettings().baseUrl || DEFAULTS.baseUrl;
+  return /^https?:\/\//i.test(base) ? base : new URL(base, location.href).origin + base;
+}
+
+function parseQuickActions(raw: any): QuickAction[] {
+  const list = typeof raw === "string" ? safeJson(raw) : raw;
+  if (!Array.isArray(list) || !list.length) return DEFAULT_QUICK_ACTIONS;
+  return list
+    .filter((a) => a && a.label && (a.mode === "translate" || a.prompt))
+    .map((a, i) => ({
+      id: String(a.id || `custom${i}`),
+      label: String(a.label),
+      prompt: String(a.prompt || ""),
+      mode: a.mode === "translate" ? "translate" : "agent",
+    }));
+}
+
+function safeJson(s: string): any {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
+export function saveSettings(patch: Partial<Settings>): void {
+  for (const [k, v] of Object.entries(patch)) {
+    if (k === "quickActions") setPref(k, JSON.stringify(v));
+    else if (k in DEFAULTS) setPref(k, v);
+  }
+}
+
+/** True when the user has not supplied a key and the demo path is usable. */
+export function usingDemoKey(): boolean {
+  return !getSettings().apiKey;
+}
