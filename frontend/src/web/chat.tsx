@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { clone, getApi, subscribe } from "./api";
-import { ActivityBar, AutoScroll, Composer, ConclusionDigest, MessageList, QuickError, Thumb, textOf } from "./components";
+import { ActivityBar, AutoScroll, Composer, ConclusionDigest, MessageList, NoteActions, QuickError, Thumb, copyText, textOf } from "./components";
 import { Markdown } from "./markdown";
+import { arxivIdOf, buildNote, noteFileName, transcriptSections, type NoteSource } from "../shared/note";
 import { presetFor } from "../core/presets";
 import { SkillBox } from "./skills";
 
@@ -128,22 +129,87 @@ function fmtDate(t: number): string {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+/** 一条提问之后的所有 assistant 文本合成一节：工具调用的过程性叙述不单独成节。 */
+function qaTurns(messages: any[]): { q: string; a: string }[] {
+  const out: { q: string; a: string }[] = [];
+  let q = "";
+  let buf: string[] = [];
+  for (const m of messages || []) {
+    if (m.role === "user") {
+      if (buf.length) out.push({ q, a: buf.join("\n\n") });
+      buf = [];
+      q = textOf(m);
+    } else if (m.role === "assistant") {
+      const a = textOf(m).trim();
+      if (a) buf.push(a);
+    }
+  }
+  if (buf.length) out.push({ q, a: buf.join("\n\n") });
+  return out;
+}
+
+/** 笔记头部只写库里真的记着的字段：没有年份就不编年份。 */
+function noteSourceOf(itemKey: string, preset: boolean): NoteSource {
+  const it = api.papers.get(itemKey);
+  return {
+    title: it?.title || "未命名文献",
+    authors: it?.authors || "",
+    year: it?.year || "",
+    venue: it?.venue || "",
+    arxiv: arxivIdOf(it?.itemKey, it?.url),
+    doi: it?.DOI || "",
+    origin: it ? (it.source === "demo" ? "演示论文（随站打包）" : it.source === "upload" ? "本地上传 PDF" : "链接导入") : "",
+    preset,
+  };
+}
+
+function reportMarkdown(snap: any, itemKey: string, conclusion: string, preset: boolean): string {
+  return buildNote(
+    noteSourceOf(itemKey, preset),
+    [{ heading: "核心贡献与结论", body: conclusion }, ...transcriptSections(qaTurns(snap?.messages || []))],
+    { heading: "精读报告" },
+  );
+}
+
+/** 最近一次问答：对比矩阵一类的单次产出用它导出，别的内容不会混进来。 */
+function answerMarkdown(snap: any, itemKey: string, preset: boolean): string {
+  const turns = qaTurns(snap?.messages || []);
+  const last = turns[turns.length - 1];
+  return buildNote(noteSourceOf(itemKey, preset), last ? transcriptSections([last]) : [], { heading: "回答笔记" });
+}
+
+const THINK_LABELS: Record<string, string> = { off: "不思考", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "很高", max: "最大" };
+
 function ModelPicker({ snap, runtime, models }: { snap: Snap; runtime: any; models: any[] }) {
   const model = models.find((m) => m.id === snap.modelId) || { thinkingLevels: ["off", "high"] };
-  const labels: Record<string, string> = { off: "不思考", minimal: "极简", low: "低", medium: "中", high: "高", xhigh: "很高", max: "最大" };
+  const labels = THINK_LABELS;
   return (
     <div class="picker">
-      <select value={snap.modelId} onChange={(e) => runtime.setModel((e.target as HTMLSelectElement).value)} title="模型">
+      <select value={snap.modelId} onChange={(e) => runtime.setModel((e.target as HTMLSelectElement).value)} title="模型" aria-label="模型">
         {models.map((m) => (
           <option value={m.id}>{m.name}</option>
         ))}
         {!models.some((m) => m.id === snap.modelId) && <option value={snap.modelId}>{snap.modelId}</option>}
       </select>
-      <select value={snap.thinkingLevel} onChange={(e) => runtime.setThinking((e.target as HTMLSelectElement).value)} title="思考强度">
+      <select value={snap.thinkingLevel} onChange={(e) => runtime.setThinking((e.target as HTMLSelectElement).value)} title="思考强度" aria-label="思考强度">
         {model.thinkingLevels.map((l: string) => (
           <option value={l}>思考：{labels[l] || l}</option>
         ))}
       </select>
+    </div>
+  );
+}
+
+/** 模型与思考强度收成二级入口：默认值就能用，不必让两个下拉框常驻首屏。 */
+function ModelFold({ snap, runtime, models }: { snap: Snap; runtime: any; models: any[] }) {
+  const [open, setOpen] = useState(false);
+  const name = models.find((m) => m.id === snap.modelId)?.name || snap.modelId;
+  return (
+    <div class="model-fold">
+      <button class="chip" data-on={open} aria-expanded={open} onClick={() => setOpen(!open)} title="展开可换模型与思考强度（默认值已够用）">
+        🧠 {name} · 思考：{THINK_LABELS[snap.thinkingLevel] || snap.thinkingLevel} {open ? "▾" : "▸"}
+      </button>
+      {open && <ModelPicker snap={snap} runtime={runtime} models={models} />}
     </div>
   );
 }
@@ -320,19 +386,19 @@ export function PanelApp() {
             ))}
           </select>
         )}
-        <button class="icon-btn" title="新建会话" onClick={newSession}>
+        <button class="icon-btn" title="新建会话" aria-label="新建会话" onClick={newSession}>
           ＋
         </button>
-        <button class="icon-btn" title="重命名会话" onClick={() => setRenaming(true)}>
+        <button class="icon-btn" title="重命名会话" aria-label="重命名会话" onClick={() => setRenaming(true)}>
           ✎
         </button>
-        <button class="icon-btn" title={conclusion ? "会话结论" : "暂无结论"} data-active={String(openConclusion)} onClick={() => setShowConclusion(!openConclusion)}>
+        <button class="icon-btn" title={conclusion ? "展开/收起会话结论" : "暂无结论"} aria-label="会话结论" data-active={String(openConclusion)} onClick={() => setShowConclusion(!openConclusion)}>
           📌
         </button>
-        <button class="icon-btn" title="删除会话" onClick={deleteSession}>
+        <button class="icon-btn" title="删除当前会话" aria-label="删除当前会话" onClick={deleteSession}>
           🗑
         </button>
-        <button class="icon-btn" title="设置" onClick={() => api.openSettings()}>
+        <button class="icon-btn" title="设置：模型、Key、MCP 与检索" aria-label="打开设置" onClick={() => api.openSettings()}>
           ⚙
         </button>
       </div>
@@ -340,6 +406,13 @@ export function PanelApp() {
         <div class="conclusion">
           <div class="conclusion-title">📌 核心贡献与结论（{snap?.meta?.paperTitle || active?.paperTitle || "本文"}）</div>
           {conclusion ? <ConclusionDigest text={conclusion} /> : <div class="muted">对话后会自动生成结论。</div>}
+          {!!conclusion && (
+            <NoteActions
+              label="精读报告"
+              build={() => reportMarkdown(snap, ctx.ref.itemKey, conclusion, presetReport)}
+              file={() => noteFileName(noteSourceOf(ctx.ref.itemKey, presetReport), "精读报告")}
+            />
+          )}
         </div>
       )}
       {!settings.apiKey && health && !health.demoKey && (
@@ -365,6 +438,15 @@ export function PanelApp() {
             activeTools={snap.activeTools}
             isStreaming={snap.isStreaming}
             onRetry={() => runtime?.retry()}
+            tail={
+              !snap.isStreaming && snap.messages.some((m: any) => m.role === "assistant") ? (
+                <NoteActions
+                  label="本条回答"
+                  build={() => answerMarkdown(snap, ctx.ref.itemKey, presetReport)}
+                  file={() => noteFileName(noteSourceOf(ctx.ref.itemKey, presetReport), "回答笔记")}
+                />
+              ) : null
+            }
             empty={
               <div class="empty small">
                 <div class="paper-title">{ctx.title}</div>
@@ -403,7 +485,7 @@ export function PanelApp() {
         attachments={attachments.map((a) => ({ dataUrl: a.dataUrl, label: `第 ${a.pageLabel} 页截图` }))}
         onRemoveAttachment={(i) => setAttachments((a) => a.filter((_, j) => j !== i))}
         onCapture={ctx?.source === "reader" ? capture : undefined}
-        footer={snap && runtime ? <ModelPicker snap={snap} runtime={runtime} models={models} /> : null}
+        footer={snap && runtime ? <ModelFold snap={snap} runtime={runtime} models={models} /> : null}
       />
     </div>
   );
@@ -419,7 +501,9 @@ export function QuickApp() {
   jobRef.current = job;
   const onLink = useLinkHandler(() => jobRef.current?.paper);
   const [saved, setSaved] = useState<string | null>(null);
+  const [copied, setCopied] = useState("");
   useEffect(() => setSaved(null), [job?.id]);
+  useEffect(() => setCopied(""), [job?.id]);
 
   const slice = useMemo(() => {
     if (!snap || job?.startIndex == null) return [];
@@ -440,6 +524,13 @@ export function QuickApp() {
     } catch (e: any) {
       window.alert(String(e?.message || e));
     }
+  };
+  /** 复制被浏览器拒绝时改下载 .md：小卡的回答同样值得留档，不能只留一个 no-op。 */
+  const copyAnswer = async () => {
+    if (await copyText(resultText)) return setCopied("已复制到剪贴板");
+    const src = noteSourceOf(String(job.paper?.itemKey || ""), false);
+    api.kb.download(noteFileName(src, "回答笔记"), buildNote(src, [{ heading: "回答", body: resultText }], { heading: "回答笔记" }), "text/markdown");
+    setCopied("剪贴板不可用，已下载 .md");
   };
 
   return (
@@ -502,8 +593,8 @@ export function QuickApp() {
       )}
       {resultText && !busy && (
         <div class="quick-actions">
-          <button class="chip" onClick={() => navigator.clipboard.writeText(resultText)}>
-            复制
+          <button class="chip" onClick={() => void copyAnswer()} title="复制这段回答；浏览器拦住剪贴板时改为下载 .md" aria-label="复制这段回答">
+            {copied ? copied : "复制"}
           </button>
           <button class="chip" onClick={save} disabled={!!saved}>
             {saved ? "✓ 已保存为批注" : job.kind === "image" ? (job.annotationKey ? "写入图片批注评论" : "保存为图片批注") : "保存为高亮批注"}

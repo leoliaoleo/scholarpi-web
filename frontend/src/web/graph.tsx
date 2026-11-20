@@ -2,12 +2,13 @@
  * Knowledge Graph visualization: d3-force + SVG with drag, zoom, filter, search,
  * and bidirectional linking to the paper reader.
  */
-import { useEffect, useRef, useState, useCallback } from "preact/hooks";
+import { useEffect, useRef, useState, useCallback, useMemo } from "preact/hooks";
 import { forceSimulation, forceLink, forceManyBody, forceCenter, forceCollide, type SimulationNodeDatum, type SimulationLinkDatum } from "d3-force";
 import { zoom as d3Zoom, zoomIdentity } from "d3-zoom";
 import { select } from "d3-selection";
 import "d3-transition";
 import type { GraphData, GraphNode, GraphEdge, NodeType } from "../core/graph";
+import { presetIds } from "../core/graph";
 import { getItem, paperTitle } from "../core/paper";
 
 interface Props {
@@ -235,6 +236,14 @@ export function GraphView({ data, onNodeClick, onPaperNavigate }: Props) {
     svg.transition().duration(500).call(zoomBehavior.transform, zoomIdentity);
   };
 
+  /** 两类来源可信度不同：预置示例是人工整理，自动提取来自元数据卡片、可能不完整。 */
+  const prov = useMemo(() => {
+    const ids = presetIds();
+    const pn = data.nodes.filter((n) => ids.nodes.has(n.id)).length;
+    const pe = data.edges.filter((e) => ids.edges.has(e.id)).length;
+    return { pn, an: data.nodes.length - pn, pe, ae: data.edges.length - pe };
+  }, [data]);
+
   return (
     <div class="graph-view">
       <div class="graph-toolbar">
@@ -258,9 +267,19 @@ export function GraphView({ data, onNodeClick, onPaperNavigate }: Props) {
             </button>
           ))}
         </div>
-        <button class="graph-reset" onClick={resetZoom} title="重置视图">
+        <button class="graph-reset" onClick={resetZoom} title="重置视图" aria-label="重置图谱缩放与位置">
           ⟲
         </button>
+      </div>
+
+      <div class="graph-legend">
+        <span class="gl-src">
+          <b class="gl-badge preset">预置示例</b> {prov.pn} 节点 · {prov.pe} 关系（随站人工整理）
+        </span>
+        <span class="gl-src">
+          <b class="gl-badge auto">自动提取</b> {prov.an} 节点 · {prov.ae} 关系（由知识库元数据卡片生成，可能不完整，点击节点可回原文核对）
+        </span>
+        <span class="gl-privacy">PDF 仅保存在本地浏览器，仅在调用 AI 时发送所选文本/截图</span>
       </div>
 
       <svg ref={svgRef} class="graph-svg" />

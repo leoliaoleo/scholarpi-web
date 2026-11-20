@@ -81,6 +81,19 @@ export function retryLabel(seconds?: number): string {
 }
 
 /**
+ * Pages but zero characters means a scan, which is a different problem from "no
+ * attachment at all": telling them apart is what stops the agent from citing a
+ * page number it never read.
+ */
+export function textLayerNotice(pages: number, chars: number): string {
+  if (chars > 0) return "";
+  if (pages > 0) {
+    return `警告：这份 PDF 有 ${pages} 页，但提取到 0 个字符（很可能是扫描件或图片版）。没有可核验的原文，因此禁止输出任何 [p. x] 页码引用；请基于摘要与元数据作答，并说明原文无法逐字核验，建议先 OCR 或改用文字版 PDF。`;
+  }
+  return "警告：这篇文献没有可读取的全文（只有摘要或元数据）。禁止输出任何 [p. x] 页码引用；请说明结论依据仅限摘要与元数据。";
+}
+
+/**
  * The status line next to the π mark. Kept deliberately non-committal: the shared
  * key exists, but its budget is a guard rail, not a promise.
  */

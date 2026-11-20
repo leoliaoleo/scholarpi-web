@@ -208,7 +208,7 @@ export function SettingsPanel() {
 
       <section>
         <h2>个人知识库</h2>
-        <Field label="检索时启用语义扩展" hint="全局检索先让模型把提问扩成中英文关键词，再一起打分；关闭后只做关键词匹配（不消耗 Key，速度更快）">
+        <Field label="高级：检索时启用语义扩展（默认关闭）" hint="开启后每次全局检索先让模型把提问扩成中英文关键词再一起打分——召回更高，但要多消耗一次模型请求；公共演示额度下建议保持关闭，只做本地关键词匹配（不额外花额度，速度更快）。左侧检索框也能临时勾选。">
           <input type="checkbox" checked={s.kbSemantic} onChange={(e) => set("kbSemantic", (e.target as HTMLInputElement).checked)} />
         </Field>
         <Field label="导入后自动生成元数据卡片" hint="每导入一篇调用一次模型，填写「核心方法 / 数据集 / 关键指标 / 一句话总结」；关闭后可在卡片里随时点「让模型生成」">

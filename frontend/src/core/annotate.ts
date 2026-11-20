@@ -191,14 +191,16 @@ function pageOrder(count: number, hint: number | null): number[] {
 /** Search the PDF's character boxes for a verbatim quote. */
 export async function locate(item: Paper, quote: string, page?: number, pageCountHint = 200): Promise<Located> {
   const key = paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
-  if (!(await ensurePdf(item))) throw new Error("这篇文献没有可用的 PDF，无法定位原文批注");
+  if (!(await ensurePdf(item))) throw new Error("这篇文献没有可定位原文的 PDF（只有摘要或元数据），高亮与批注需要本地 PDF 文件。");
   const doc = await getDoc(key);
   const count = Math.min(doc?.numPages || 0, pageCountHint);
   const samePaper = viewerState.paperKey === key;
   const hint = typeof page === "number" ? page - 1 : samePaper ? viewerState.currentPage - 1 : null;
+  let pagesWithText = 0;
   for (const pageIndex of pageOrder(count, hint)) {
     const data = await getPageData(key, pageIndex);
     if (!data.chars.length) continue;
+    pagesWithText++;
     const m = matchQuote(data.chars, quote);
     if (m) {
       return {
@@ -211,6 +213,11 @@ export async function locate(item: Paper, quote: string, page?: number, pageCoun
         charCount: data.chars.length,
       };
     }
+  }
+  if (!pagesWithText) {
+    const e = new Error("这篇 PDF 没有文字层（很可能是扫描件或图片版）：无法逐字定位原文，也就无法高亮。请先做 OCR，或改用 arXiv 上的文字版 PDF。") as Error & { noTextLayer?: boolean };
+    e.noTextLayer = true;
+    throw e;
   }
   throw new Error(
     "在 PDF 中没有找到这段原文。请使用 paper_read / paper_search 返回的原文逐字复制（单页内的一句或几句话），不要改写或翻译。",

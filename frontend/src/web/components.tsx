@@ -352,6 +352,89 @@ export function QuickError({ error }: { error: string }) {
   return <ErrorBox message={{ stopReason: "error", errorMessage: error }} />;
 }
 
+/** 剪贴板 API 在非安全上下文或被站点权限拦掉时会 reject，这里退回到选中文本复制。 */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // 继续试 execCommand
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "-1000px";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 「复制 Markdown」+「下载笔记 .md」。
+ *
+ * 内容永远由 `build()` 现场生成，所以只会包含调用点所在的那份报告；复制被浏览器拒绝时
+ * 自动降级成下载，并把文本摊在框里让用户自己选中，不静默吞掉失败。
+ */
+export function NoteActions({ build, file, label = "笔记" }: { build: () => string; file: () => string; label?: string }) {
+  const [status, setStatus] = useState<{ msg: string; text?: string } | null>(null);
+  useEffect(() => {
+    if (!status) return;
+    const t = setTimeout(() => setStatus(null), 9000);
+    return () => clearTimeout(t);
+  }, [status]);
+  const api = getApi();
+
+  const copy = async () => {
+    const text = build();
+    if (!text.trim()) return setStatus({ msg: "报告还是空的：等回答生成完再复制。" });
+    if (await copyText(text)) return setStatus({ msg: `已复制${label}的 Markdown，可直接粘贴进笔记软件。` });
+    api.kb.download(file(), text, "text/markdown");
+    setStatus({ msg: `浏览器不允许写入剪贴板：已改为下载 ${label} .md，也可以选中下面的文本自己复制。`, text });
+  };
+  const save = () => {
+    const text = build();
+    if (!text.trim()) return setStatus({ msg: "报告还是空的：等回答生成完再下载。" });
+    api.kb.download(file(), text, "text/markdown");
+    setStatus({ msg: `已下载 ${label}笔记（Markdown，含页码引用）。` });
+  };
+
+  return (
+    <div class="note-actions">
+      <button class="chip" onClick={() => void copy()} title={`把${label}正文连同标题、来源与页码引用复制成 Markdown`}>
+        复制 Markdown
+      </button>
+      <button class="chip" onClick={save} title={`下载 ${label} .md，可导入 Obsidian / Notion / Typora`}>
+        下载笔记 .md
+      </button>
+      {status && (
+        <div class="note-status muted small">
+          {status.msg}
+          {status.text != null && (
+            <textarea
+              class="note-fallback"
+              readOnly
+              value={status.text}
+              onFocus={(e) => (e.target as HTMLTextAreaElement).select()}
+              aria-label="可复制的笔记文本"
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * The thinking / tool-call / narration steps of one reply, folded into a single
  * block. Collapsed by default, showing only the latest step; click to expand.
@@ -511,6 +594,7 @@ export function MessageList({
   onRetry,
   empty,
   activeTools = [],
+  tail,
 }: {
   messages: any[];
   streaming: any | null;
@@ -519,6 +603,8 @@ export function MessageList({
   onRetry?: () => void;
   empty?: ComponentChildren;
   activeTools?: any[];
+  /** 收尾动作（复制/下载笔记）：跟着转录末尾，不跟着每条历史消息重复出现。 */
+  tail?: ComponentChildren;
 }) {
   const active = new Map<string, any>(activeTools.map((t) => [t.id, t]));
   const results = new Map<string, any>();
@@ -569,6 +655,7 @@ export function MessageList({
           </div>
         </div>
       )}
+      {tail}
     </div>
   );
 }
@@ -741,7 +828,12 @@ export function Composer({
       )}
       <div class="input-row">
         {onCapture && (
-          <button class="capture" onClick={onCapture} title="框图：在 PDF 上框选一块区域作为图片附件 (⌘/Ctrl+Shift+K 直接框图提问)">
+          <button
+            class="capture"
+            onClick={onCapture}
+            title="框图提问：在 PDF 上框选一块区域，作为图片附在问题里 (⌘/Ctrl+Shift+K)"
+            aria-label="框图提问：在 PDF 上框选区域作为图片附件"
+          >
             📷
           </button>
         )}

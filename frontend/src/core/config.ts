@@ -77,7 +77,7 @@ const DEFAULTS: Omit<Settings, "quickActions"> = {
   annotationTag: "AI",
   autoConclusion: true,
   autoFollow: true,
-  kbSemantic: true,
+  kbSemantic: false,
   kbAutoCard: true,
   mcpBridge: true,
   mcpServers: "[]",

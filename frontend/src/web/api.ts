@@ -30,7 +30,7 @@ import { seedPreset as seedPresetSession } from "../core/presets";
 import { clearSelection, selectionChanges, selectedKeys, setSelection, toggleSelection } from "../core/selection";
 import { SKILLS, grabCandidates, lastSkillRun, runSkill } from "../core/skills";
 import { SessionManager } from "../core/sessions";
-import { gotoPage, highlightRects, paperKey, refFromPaperKey, setViewerState, viewerState } from "../core/viewer-state";
+import { gotoPage, highlightRects, paperKey, refFromPaperKey, setViewerState, viewerCommands, viewerState } from "../core/viewer-state";
 
 export const VERSION = "0.1.0";
 
@@ -224,7 +224,17 @@ const api = {
     try {
       const loc = await locate(item, quote, page);
       highlightRects(loc.pageIndex, loc.rects, loc.viewBox);
-    } catch (e) {
+      if (loc.pageIndex + 1 !== page) viewerCommands.emit({ type: "notice", text: `原句在第 ${loc.pageIndex + 1} 页，已按引用跳到第 ${page} 页。`, tone: "info" });
+    } catch (e: any) {
+      // 跳页成功不等于匹配成功：这句话必须说出来，否则读者会以为圈出来的就是依据。
+      const noText = !!e?.noTextLayer;
+      viewerCommands.emit({
+        type: "notice",
+        text: noText
+          ? String(e?.message || e)
+          : `已跳转至第 ${page} 页，未精确匹配到原句高亮：这段引用可能是改写或跨页拼接，请以页面原文为准。`,
+        tone: "warn",
+      });
       console.debug("[ScholarPi] quote not located for highlight", e);
     }
   },

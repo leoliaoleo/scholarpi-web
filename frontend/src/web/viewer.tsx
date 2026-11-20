@@ -14,7 +14,7 @@ import { ensurePdf, getItem, type Paper } from "../core/paper";
 import { safeUrl } from "../core/library-util";
 import { EXAMPLE_ITEM_KEY } from "../core/presets";
 import { classifyError } from "../shared/errors";
-import { getDoc, getPage, getPageData } from "../core/reader";
+import { getDoc, getPage, getPageData, getPageText } from "../core/reader";
 import { getRangeRects, type PdfChar } from "../core/text";
 import { renderActiveRegion } from "../core/vision";
 import { gotoPage, refFromPaperKey, setViewerState, viewerCommands, viewerState, type ViewerCommand } from "../core/viewer-state";
@@ -67,6 +67,8 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
   const [dl, setDl] = useState<{ r: number; t: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [openAnn, setOpenAnn] = useState<{ ann: Annotation; left: number; top: number } | null>(null);
+  /** 「跳页成功 ≠ 匹配成功」：没定位到原句时把这句话显示在阅读器顶部。 */
+  const [notice, setNotice] = useState<{ text: string; tone: string } | null>(null);
   const regionResolve = useRef<((img: any) => void) | null>(null);
   /** A `[p. x]` click that arrived before the PDF was on screen, applied the moment it is. */
   const pendingJump = useRef<{ page: number; smooth: boolean } | null>(null);
@@ -81,6 +83,7 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
     setError("");
     setSel(null);
     setPulse(null);
+    setNotice(null);
     setOpenAnn(null);
     pendingJump.current = null;
     for (const k of [...pageInfos.keys()]) if (k.startsWith(`${docKey}:`)) pageInfos.delete(k);
@@ -117,6 +120,16 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
         setViewerState({ pageCount: d.numPages, currentPage: 1, loading: false });
         if (!localStorage.getItem("scholarpi.zoom")) await fitWidth(d);
         setAnnotations(await listAnnotationsFallback(item));
+        // 扫描件在打开时就讲清楚，而不是等读者点页码才发现高亮不出来。
+        const sample = await Promise.all(
+          Array.from({ length: Math.min(3, d.numPages) }, (_, i) => getPageText(docKey, i).catch(() => "")),
+        );
+        if (!cancelled && !sample.join("").trim()) {
+          setNotice({
+            text: `这份 PDF 有 ${d.numPages} 页，但前 ${sample.length} 页没有提取到文字（可能是扫描件或图片版）：无法逐句定位原文，也不会生成页码引用。建议先 OCR，或改用文字版 PDF。`,
+            tone: "warn",
+          });
+        }
       } catch (e: any) {
         if (!cancelled) {
           setError(String(e?.message || e));
@@ -157,6 +170,7 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
         else pendingJump.current = { page: c.page, smooth: c.smooth !== false };
       } else if (c.type === "highlight") setPulse({ pageIndex: c.pageIndex, rects: c.rects, keep: !!c.keep });
       else if (c.type === "clear-highlight") setPulse(null);
+      else if (c.type === "notice") setNotice({ text: c.text, tone: c.tone || "info" });
     };
     return subscribe(viewerCommands, onCmd);
   }, [doc, docKey]);
@@ -188,6 +202,13 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
     const t = setTimeout(() => setPulse(null), 8000);
     return () => clearTimeout(t);
   }, [pulse]);
+
+  // 提醒会自己消失，但"没匹配到原句"要说得够久，读者才来得及去看页面。
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), notice.tone === "warn" ? 15000 : 7000);
+    return () => clearTimeout(t);
+  }, [notice]);
 
   // ---------------------------------------------------------------- capture hook (chat 📷 button)
   useEffect(() => {
@@ -330,12 +351,28 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
             <button class="icon-btn" title="适应宽度" onClick={() => { localStorage.removeItem("scholarpi.zoom"); if (doc) void fitWidth(doc); }}>
               ⤢
             </button>
-            <button class="icon-btn" title="框图提问（拖出一个方框）" data-active={String(regionOn)} onClick={() => setRegionOn(!regionOn)}>
+            <button
+              class="icon-btn"
+              title="框图提问：拖出一个方框，把框里的内容作为图片附在问题里"
+              aria-label="框图提问：在 PDF 上拖出一个方框作为图片提问"
+              aria-pressed={regionOn}
+              data-active={String(regionOn)}
+              onClick={() => setRegionOn(!regionOn)}
+            >
               ▣
             </button>
           </>
         )}
       </div>
+
+      {notice && (
+        <div class={`reader-notice ${notice.tone}`} role="status">
+          <span>{notice.text}</span>
+          <button class="rn-close" title="关闭提示" aria-label="关闭提示" onClick={() => setNotice(null)}>
+            ×
+          </button>
+        </div>
+      )}
 
       <div
         class="pages"

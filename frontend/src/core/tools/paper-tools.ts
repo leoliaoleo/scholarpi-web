@@ -10,6 +10,7 @@ import { listSessionsForPaper } from "../store";
 import { searchPages, sliceWithHint } from "../text";
 import { paperKey, viewerState } from "../viewer-state";
 import { clip, ok, parsePages, tool, type Tool, type ToolContext } from "./common";
+import { textLayerNotice } from "../../shared/errors";
 
 const itemKeyParam = Type.Optional(
   Type.String({ description: "Key of another paper in the workspace (see library_search). Omit for the current paper." }),
@@ -35,7 +36,10 @@ export function paperTools(ctx: ToolContext): Tool[] {
       const anns = await getAnnotations(item);
       const sessions = await listSessionsForPaper(item.libraryID, item.itemKey);
       const lines = Object.entries(meta).map(([k, v]) => `${k}: ${k === "abstract" ? v : clip(v, 300)}`);
-      lines.push(`text source: ${text.source}, pages: ${text.totalPages}, characters: ${text.pages.reduce((n, s) => n + s.length, 0)}`);
+      const chars = text.pages.reduce((n, s) => n + s.length, 0);
+      lines.push(`text source: ${text.source}, pages: ${text.totalPages}, characters: ${chars}`);
+      const noText = textLayerNotice(text.totalPages, chars);
+      if (noText) lines.push(noText);
       if (!p.item_key || p.item_key === ctx.paper.itemKey) {
         if (viewerState.paperKey === paperKey(ctx.paper) && viewerState.currentPage > 0)
           lines.push(`user is currently viewing page: ${viewerState.currentPage}`);
@@ -66,6 +70,9 @@ export function paperTools(ctx: ToolContext): Tool[] {
       const item = resolvePaperItem(ctx, p.item_key);
       const text = await getPaperText(item);
       if (!text.pages.length) throw new Error("该文献没有可读取的全文（没有 PDF 附件或尚未索引）");
+      if (!text.pages.reduce((n, s) => n + s.length, 0)) {
+        throw new Error(`这篇 PDF 有 ${text.totalPages} 页但没有文字层（很可能是扫描件或图片版），无法读取原文。请改用 arXiv 上的文字版 PDF 或先做 OCR；在此之前不要输出 [p. x] 页码引用。`);
+      }
       const max = getSettings().maxReadChars;
       let body = "";
       let label = "";
@@ -117,6 +124,9 @@ export function paperTools(ctx: ToolContext): Tool[] {
       const item = resolvePaperItem(ctx, p.item_key);
       const text = await getPaperText(item);
       if (!text.pages.length) throw new Error("该文献没有可搜索的全文");
+      if (!text.pages.reduce((n, s) => n + s.length, 0)) {
+        throw new Error(`这篇 PDF 没有文字层（扫描件或图片版），无法在原文中搜索，也没有可引用的页码。请说明原文不可核验，不要输出 [p. x]。`);
+      }
       const hits = searchPages(text.pages, p.query, Math.min(p.max_results || 8, 20));
       if (!hits.length) return ok(`No matches for "${p.query}". Try different or fewer keywords.`, { count: 0 });
       return ok(hits.map((h, i) => `${i + 1}. [p.${h.page + 1}] ${h.text}`).join("\n\n"), { count: hits.length });

@@ -27,6 +27,7 @@ export type ViewerCommand =
   | { type: "goto"; page: number; smooth?: boolean }
   | { type: "highlight"; pageIndex: number; rects: number[][]; viewBox: number[]; keep?: boolean }
   | { type: "clear-highlight" }
+  | { type: "notice"; text: string; tone?: "warn" | "info" }
   | { type: "refresh" };
 
 export const viewerCommands = new Emitter<ViewerCommand>();

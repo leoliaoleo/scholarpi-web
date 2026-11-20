@@ -364,6 +364,41 @@ button.start-side { font-size: calc(13px * var(--site-type, 1)); padding: calc(8
   white-space: nowrap;
   max-width: 60%;
 }
+/* 「跳页成功 ≠ 匹配成功」的诚实提示：浮在页面上方，不改阅读区高度。 */
+.reader-notice {
+  position: absolute;
+  top: calc(38px * var(--site-space, 1));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: flex-start;
+  gap: calc(8px * var(--site-space, 1));
+  max-width: min(560px, calc(100% - 28px));
+  padding: calc(7px * var(--site-space, 1)) calc(10px * var(--site-space, 1));
+  border-radius: 8px;
+  font-size: calc(12px * var(--site-type, 1));
+  line-height: 1.5;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  animation: notice-in 0.18s ease-out;
+}
+.reader-notice.warn { background: #3a2b18; border: 1px solid #8a6a2f; color: #f0dcae; }
+.reader-notice.info { background: #1d2a3a; border: 1px solid #35547a; color: #cfe0f5; }
+.reader-notice .rn-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.75;
+}
+.reader-notice .rn-close:hover { opacity: 1; }
+@keyframes notice-in {
+  from { opacity: 0; transform: translate(-50%, -6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
 .spacer { flex: 1 1 auto; }
 .zoom { font-size: calc(11.5px * var(--site-type, 1)); color: var(--muted); min-width: 40px; text-align: center; }
 .page-nav { display: flex; align-items: center; gap: calc(4px * var(--site-space, 1)); }
@@ -870,6 +905,9 @@ button.start-side { font-size: calc(13px * var(--site-type, 1)); padding: calc(8
 .kb-search,
 .kb-collections,
 .kb-import { display: flex; flex-direction: column; gap: calc(5px * var(--site-space, 1)); }
+/* 检索框是左栏的第一件事：比其它控件大一档，焦点环明显。 */
+.kb-search .url-add input { font-size: calc(13.5px * var(--site-type, 1)); padding: calc(6px * var(--site-space, 1)) calc(8px * var(--site-space, 1)); }
+.kb-search .url-add input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: var(--accent); }
 .kb-switch { display: flex; align-items: center; gap: calc(8px * var(--site-space, 1)); flex-wrap: wrap; font-size: calc(11px * var(--site-type, 1)); color: var(--muted); }
 .kb-switch label { display: inline-flex; align-items: center; gap: calc(3px * var(--site-space, 1)); cursor: pointer; }
 .kb-switch input { width: auto; margin: 0; }
@@ -957,6 +995,41 @@ button.start-side { font-size: calc(13px * var(--site-type, 1)); padding: calc(8
   padding: calc(4px * var(--site-space, 1)) calc(6px * var(--site-space, 1));
 }
 .kb-select-bar .small { flex: 1 1 auto; }
+/* 首屏只留检索、列表和导入：备份 / MCP / 模型设置收在「⋯ 更多」里。 */
+.kb-more {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(4px * var(--site-space, 1));
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--site-radius, 8px) * 0.75);
+  padding: calc(5px * var(--site-space, 1)) calc(6px * var(--site-space, 1));
+}
+.kb-more .muted { flex: 1 1 100%; }
+.chip-push { margin-left: auto; }
+.matrix-hint { flex: 0 1 auto; }
+/* 专题与标签默认各占一行，展开才铺满。 */
+.chips.one-line { flex-wrap: nowrap; overflow: hidden; max-height: calc(26px * var(--site-type, 1)); }
+.fold { display: inline-flex; align-items: center; gap: calc(4px * var(--site-space, 1)); border: none; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+/* 「开着的」chip 要有明显状态：批量导入、⋯ 更多、🕸 图谱、模型折叠都靠它。 */
+.chip[data-on="true"],
+.fold[data-on="true"] {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--fg);
+}
+.fold-hint { font-style: normal; font-weight: 400; color: var(--muted); font-size: calc(11px * var(--site-type, 1)); }
+.kb-switch .adv-tag {
+  border: 1px solid var(--border);
+  border-radius: calc(var(--site-radius, 8px) * 1.5);
+  background: var(--bg2);
+  color: var(--muted);
+  font-size: calc(10px * var(--site-type, 1));
+  padding: 0 calc(5px * var(--site-space, 1));
+}
+.model-fold { display: flex; flex-wrap: wrap; align-items: center; gap: calc(6px * var(--site-space, 1)); }
+.key-state-actions { display: inline-flex; align-items: center; gap: calc(4px * var(--site-space, 1)); }
 .kb-import textarea,
 .kb-import select { width: 100%; }
 .kb-import-row { display: flex; align-items: center; gap: calc(4px * var(--site-space, 1)); flex-wrap: wrap; }
@@ -1146,6 +1219,31 @@ button.danger { color: var(--error); border-color: var(--error); }
   border-bottom: 1px solid var(--border);
   z-index: 10;
 }
+
+/* 来源与隐私声明：图谱是自动抽取的，读者要先知道哪些节点可信、原始 PDF 在哪。 */
+.graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 6px 16px;
+  background: #f2f4f7;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: #5a6472;
+  line-height: 1.5;
+  flex: 0 0 auto;
+}
+.graph-legend .gl-src { display: inline-flex; align-items: center; gap: 5px; }
+.graph-legend .gl-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 11px;
+}
+.graph-legend .gl-badge.preset { background: #e2e9fb; color: #2c52a8; }
+.graph-legend .gl-badge.auto { background: #e6f4ea; color: #2b6b3d; }
+.graph-legend .gl-privacy { margin-left: auto; color: #6b7280; }
 
 .graph-search {
   flex: 0 0 200px;

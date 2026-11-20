@@ -456,3 +456,17 @@ export async function ensurePresetGraph(): Promise<void> {
   for (const node of preset.nodes) await saveNode(node);
   for (const edge of preset.edges) await saveEdge(edge);
 }
+
+let presetKeySets: { nodes: Set<string>; edges: Set<string> } | null = null;
+
+/**
+ * Ids that come from buildPresetGraph(): everything else in the graph was
+ * extracted from a metadata card. The legend needs the two provenances apart.
+ */
+export function presetIds(): { nodes: Set<string>; edges: Set<string> } {
+  if (!presetKeySets) {
+    const preset = buildPresetGraph();
+    presetKeySets = { nodes: new Set(preset.nodes.map((n) => n.id)), edges: new Set(preset.edges.map((e) => e.id)) };
+  }
+  return presetKeySets;
+}

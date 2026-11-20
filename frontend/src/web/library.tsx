@@ -62,8 +62,11 @@ export function LibraryRail({
   const [cardKey, setCardKey] = useState<string | null>(null);
   const [sel, setSel] = useState<string[]>(() => selectedKeys());
   const [panel, setPanel] = useState<"" | "import" | "backup">("");
+  const [more, setMore] = useState(false);
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState("");
   const progress = useImportProgress();
 
   const reload = useCallback(async () => {
@@ -106,25 +109,66 @@ export function LibraryRail({
   const demo = visible.filter((p) => p.source === "demo");
   const filtering = filter.collection || filter.tag || filter.text;
 
+  /** 首屏就摆着的上传入口：和批量导入面板走同一个 importFiles，只是不必先展开面板。 */
+  const addFiles = async (list: FileList | null) => {
+    const files = Array.from(list || []).filter((f) => /\.pdf$/i.test(f.name));
+    if (!files.length) {
+      setError("这里只收 PDF；arXiv ID / DOI 请用「批量导入」。");
+      return;
+    }
+    setError("");
+    setUploading(`正在入库 ${files.length} 个 PDF…`);
+    try {
+      const rows = await api.kb.importFiles(files, { collectionId: filter.collection || undefined });
+      const bad = rows.filter((r) => !r.ok);
+      if (bad.length) setError(`${bad.length} 个 PDF 没能入库：${bad.map((r) => `${r.input}（${r.note}）`).join("；").slice(0, 220)}`);
+      onChanged();
+      await reload();
+    } catch (e: any) {
+      setError(String(e?.message || e));
+    } finally {
+      setUploading("");
+      if (uploadRef.current) uploadRef.current.value = "";
+    }
+  };
+
   return (
     <div class="kb">
       <KbSearch onOpen={onOpen} />
 
-      <CollectionsBar collections={collections} active={filter.collection} onPick={(id) => setFilter({ ...filter, collection: id })} onChanged={reload} />
-
       <div class="kb-tools">
-        <button class="chip" data-on={panel === "import"} onClick={() => setPanel(panel === "import" ? "" : "import")}>
+        <button class="chip" onClick={() => uploadRef.current?.click()} disabled={!!uploading} title="上传本机 PDF：文件只写进浏览器 IndexedDB，不上传服务器">
+          ⇧ 上传 PDF
+        </button>
+        <input ref={uploadRef} type="file" accept="application/pdf,.pdf" multiple hidden aria-label="上传 PDF 文件" onChange={(e) => void addFiles((e.target as HTMLInputElement).files)} />
+        <button class="chip" data-on={panel === "import"} onClick={() => setPanel(panel === "import" ? "" : "import")} title="粘贴 arXiv ID / DOI / 链接，一次抓一批">
           ⇪ 批量导入
         </button>
-        <button class="chip" data-on={panel === "backup"} onClick={() => setPanel(panel === "backup" ? "" : "backup")}>
-          💾 备份
-        </button>
         {!!filtering && (
-          <button class="chip" onClick={() => setFilter(EMPTY)}>
+          <button class="chip" onClick={() => setFilter(EMPTY)} title="清除专题、标签与关键词筛选">
             ✕ 清除筛选
           </button>
         )}
+        <button class="chip chip-push" data-on={more} onClick={() => setMore(!more)} title="备份与恢复、MCP 连接等不常改的东西">
+          ⋯ 更多
+        </button>
+        {uploading && (
+          <span class="small muted">
+            <span class="spinner" /> {uploading}
+          </span>
+        )}
       </div>
+      {more && (
+        <div class="kb-more">
+          <button class="chip" data-on={panel === "backup"} onClick={() => setPanel(panel === "backup" ? "" : "backup")} title="导出 JSON / BibTeX，或从备份恢复">
+            💾 备份与恢复
+          </button>
+          <button class="chip" onClick={() => api.openSettings()} title="模型与思考强度、MCP 桥接器、检索与隐私设置">
+            ⚙ 模型 · MCP · 高级设置
+          </button>
+          <span class="muted small">不常动的都收在这里，首屏只留检索、列表和导入。</span>
+        </div>
+      )}
       {progress && panel !== "import" && (
         <div class="kb-progress" role="status">
           <span class="kb-progress-track">
@@ -150,6 +194,7 @@ export function LibraryRail({
           >
             📊 对比矩阵
           </button>
+          <span class="muted small matrix-hint">{sel.length < 2 ? "先勾选 2–5 篇" : `这 ${sel.length} 篇横向对比`}</span>
           <CollectionsPicker
             collections={collections}
             onPick={async (id) => {
@@ -164,6 +209,8 @@ export function LibraryRail({
         </div>
       )}
 
+      <CollectionsBar collections={collections} active={filter.collection} onPick={(id) => setFilter({ ...filter, collection: id })} onChanged={reload} />
+
       <TagBar tags={tags} active={filter.tag} onPick={(t) => setFilter({ ...filter, tag: filter.tag === t ? "" : t })} />
 
       <PaperSection
@@ -174,7 +221,7 @@ export function LibraryRail({
         onOpen={onOpen}
         onRemove={onRemove}
         onCard={setCardKey}
-        empty={filtering ? "没有符合筛选条件的文献" : "上传 PDF，或在上方粘贴 arXiv ID / DOI 批量导入"}
+        empty={filtering ? "没有符合筛选条件的文献" : "点上方「⇧ 上传 PDF」放进自己的论文，或用「⇪ 批量导入」粘贴 arXiv ID / DOI。"}
       />
       <PaperSection
         title="演示论文"
@@ -196,7 +243,8 @@ export function LibraryRail({
 
 function KbSearch({ onOpen }: { onOpen: (item: Paper) => void }) {
   const [text, setText] = useState("");
-  const [semantic, setSemantic] = useState(true);
+  // 语义扩展要额外发一次模型请求，公共演示额度不该花在检索同义词上：默认关，需要时再勾。
+  const [semantic, setSemantic] = useState(false);
   const [fullText, setFullText] = useState(false);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<KbSearchResult | null>(null);
@@ -223,21 +271,29 @@ function KbSearch({ onOpen }: { onOpen: (item: Paper) => void }) {
     <div class="kb-search">
       <form
         class="url-add"
+        role="search"
         onSubmit={(e) => {
           e.preventDefault();
           void run();
         }}
       >
-        <input value={text} placeholder="知识库检索：关键词或中文提问" onInput={(e) => setText((e.target as HTMLInputElement).value)} />
-        <button class="icon-btn" type="submit" title="检索" disabled={busy}>
+        <input
+          value={text}
+          placeholder="检索知识库：标题、关键词或中文提问"
+          aria-label="知识库检索"
+          title="默认走本地 BM25 检索，不消耗演示额度"
+          onInput={(e) => setText((e.target as HTMLInputElement).value)}
+        />
+        <button class="icon-btn" type="submit" title="检索" aria-label="检索知识库" disabled={busy}>
           {busy ? <span class="spinner" /> : "🔎"}
         </button>
       </form>
       <div class="kb-switch">
-        <label title="让模型先扩展中英同义词，召回更高、多一次调用">
+        <label class="adv" title="高级：先让模型扩展中英同义词，召回更高，但每次检索多消耗一次模型请求">
           <input type="checkbox" checked={semantic} onChange={(e) => setSemantic((e.target as HTMLInputElement).checked)} /> 语义扩展
+          <span class="adv-tag">高级 · 多一次请求</span>
         </label>
-        <label title="把已解析的 PDF 全文也纳入打分">
+        <label title="把已解析的 PDF 全文也纳入打分（本地计算，稍慢）">
           <input type="checkbox" checked={fullText} onChange={(e) => setFullText((e.target as HTMLInputElement).checked)} /> 含全文
         </label>
         {result && <span class="muted small">{`${result.total} 条命中 · ${result.engine}`}</span>}
@@ -281,12 +337,15 @@ function KbSearch({ onOpen }: { onOpen: (item: Paper) => void }) {
 
 function CollectionsBar({ collections, active, onPick, onChanged }: { collections: Collection[]; active: string; onPick: (id: string) => void; onChanged: () => void }) {
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
+  const [draft, setDraft] = useState("");
+  // 专题是筛选项，不是主任务：默认折起来，标题行仍然说清楚当前在哪个专题里。
+  const [open, setOpen] = useState(false);
+  const name = collections.find((c) => c.id === active)?.name || "";
 
   const add = async () => {
-    const label = name.trim();
+    const label = draft.trim();
     setAdding(false);
-    setName("");
+    setDraft("");
     if (!label) return;
     const row = await api.kb.createCollection(label);
     onPick(row.id);
@@ -296,12 +355,31 @@ function CollectionsBar({ collections, active, onPick, onChanged }: { collection
   return (
     <div class="kb-collections">
       <div class="group-title">
-        研究专题<span class="muted">{collections.length}</span>
-        <button class="link-btn" onClick={() => setAdding(!adding)} title="新建专题">
-          ＋
+        <button class="fold" data-on={open} onClick={() => setOpen(!open)} title={open ? "收起研究专题" : "展开研究专题与筛选"} aria-expanded={open}>
+          研究专题<span class="muted">{collections.length}</span>
+          {name && !open ? <em class="fold-hint">当前：{name}</em> : null}
+          <span class="chev">{open ? "▾" : "▸"}</span>
         </button>
+        {open && (
+          <button class="link-btn" onClick={() => setAdding(true)} title="新建专题" aria-label="新建研究专题">
+            ＋
+          </button>
+        )}
       </div>
-      {adding && (
+      {!open && !!collections.length && (
+        <div class="chips one-line">
+          <button class={active ? "chip" : "chip on"} onClick={() => onPick("")} title="显示全部文献">
+            全部
+          </button>
+          {collections.map((c) => (
+            <button key={c.id} class={active === c.id ? "chip on" : "chip"} title={c.description || c.name} onClick={() => onPick(active === c.id ? "" : c.id)} style={c.color ? { borderColor: c.color } : undefined}>
+              {c.name}
+              <b>{c.itemKeys.length}</b>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && adding && (
         <form
           class="url-add"
           onSubmit={(e) => {
@@ -309,38 +387,40 @@ function CollectionsBar({ collections, active, onPick, onChanged }: { collection
             void add();
           }}
         >
-          <input autoFocus value={name} placeholder="专题名称，如「高效微调」" onInput={(e) => setName((e.target as HTMLInputElement).value)} />
-          <button class="icon-btn" type="submit" title="创建">
+          <input autoFocus value={draft} placeholder="专题名称，如「高效微调」" onInput={(e) => setDraft((e.target as HTMLInputElement).value)} />
+          <button class="icon-btn" type="submit" title="创建" aria-label="创建专题">
             ✓
           </button>
         </form>
       )}
-      <div class="chips">
-        <button class={active ? "chip" : "chip on"} onClick={() => onPick("")}>
-          全部
-        </button>
-        {collections.map((c) => (
-          <span class="chip-wrap" key={c.id}>
-            <button class={active === c.id ? "chip on" : "chip"} title={c.description || c.name} onClick={() => onPick(active === c.id ? "" : c.id)} style={c.color ? { borderColor: c.color } : undefined}>
-              {c.name}
-              <b>{c.itemKeys.length}</b>
-            </button>
-            <span
-              class="chip-del"
-              title="删除专题（不影响文献）"
-              onClick={async () => {
-                if (!window.confirm(`删除专题「${c.name}」？文献本身会保留。`)) return;
-                await api.kb.deleteCollection(c.id);
-                if (active === c.id) onPick("");
-                onChanged();
-              }}
-            >
-              ×
+      {open && (
+        <div class="chips">
+          <button class={active ? "chip" : "chip on"} onClick={() => onPick("")} title="显示全部文献">
+            全部
+          </button>
+          {collections.map((c) => (
+            <span class="chip-wrap" key={c.id}>
+              <button class={active === c.id ? "chip on" : "chip"} title={c.description || c.name} onClick={() => onPick(active === c.id ? "" : c.id)} style={c.color ? { borderColor: c.color } : undefined}>
+                {c.name}
+                <b>{c.itemKeys.length}</b>
+              </button>
+              <span
+                class="chip-del"
+                title="删除专题（不影响文献）"
+                onClick={async () => {
+                  if (!window.confirm(`删除专题「${c.name}」？文献本身会保留。`)) return;
+                  await api.kb.deleteCollection(c.id);
+                  if (active === c.id) onPick("");
+                  onChanged();
+                }}
+              >
+                ×
+              </span>
             </span>
-          </span>
-        ))}
-        {!collections.length && <span class="muted small">还没有专题：点 ＋ 建一个研究方向。</span>}
-      </div>
+          ))}
+          {!collections.length && <span class="muted small">还没有专题：点 ＋ 建一个研究方向。</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -372,15 +452,24 @@ function CollectionsPicker({ collections, onPick }: { collections: Collection[];
 }
 
 function TagBar({ tags, active, onPick }: { tags: { tag: string; count: number }[]; active: string; onPick: (t: string) => void }) {
+  const [open, setOpen] = useState(false);
   if (!tags.length) return null;
+  // 标签是辅助筛选：默认一行，剩下的收在「展开全部」后面。
+  const many = tags.length > 8;
+  const shown = open || !many ? tags : tags.slice(0, 8);
   return (
-    <div class="chips tags">
-      {tags.slice(0, 14).map((t) => (
+    <div class={open ? "chips tags" : "chips tags one-line"}>
+      {shown.map((t) => (
         <button class={active === t.tag ? "chip on" : "chip"} onClick={() => onPick(t.tag)} title={`标签筛选：${t.tag}`}>
           #{t.tag}
           <b>{t.count}</b>
         </button>
       ))}
+      {many && (
+        <button class="chip" onClick={() => setOpen(!open)} title={open ? "收回一行" : `还有 ${tags.length - 8} 个标签`}>
+          {open ? "收起标签" : `展开全部 ${tags.length} 个标签`}
+        </button>
+      )}
     </div>
   );
 }

@@ -244,7 +244,7 @@ export function kbTools(ctx: ToolContext): Tool[] {
     name: "kb_search",
     label: "知识库全局检索",
     description:
-      "Search ACROSS the whole library (or one collection) with BM25 over titles, abstracts, tags and card fields, plus model-expanded synonyms so a Chinese question finds English text. full_text=true also indexes PDF text (slower).",
+      "Search ACROSS the whole library (or one collection) with BM25 over titles, abstracts, tags and card fields. full_text=true also indexes PDF text (slower). Model-expanded bilingual synonyms are OFF by default (设置 → 高级：检索时启用语义扩展) so a plain search costs no demo quota; turn them on only when a Chinese question keeps missing English text.",
     parameters: Type.Object({
       query: Type.String(),
       collection: Type.Optional(Type.String({ description: "Restrict to one collection" })),

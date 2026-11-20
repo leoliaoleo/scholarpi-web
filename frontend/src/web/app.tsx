@@ -234,9 +234,20 @@ export function App() {
           <span class={`dot ${status.tone}`} />
           <span class="small">{status.text}</span>
         </button>
-        <button class="chip" onClick={() => setShowSettings(true)}>
-          设置
-        </button>
+        <div class="key-state-actions">
+          <button
+            class="chip"
+            data-on={mode === "graph"}
+            aria-pressed={mode === "graph"}
+            title={mode === "graph" ? "返回文献精读" : "打开知识图谱：论文 / 方法 / 数据集的关系网"}
+            onClick={() => (mode === "graph" ? switchToReading() : void switchToGraph())}
+          >
+            🕸 知识图谱
+          </button>
+          <button class="chip" onClick={() => setShowSettings(true)} title="模型与思考强度、MCP 桥接器、检索与隐私设置" aria-label="打开设置">
+            ⚙ 设置
+          </button>
+        </div>
       </div>
       {showQuota && (
         <div class="quota-note">
@@ -301,7 +312,9 @@ export function App() {
             </button>
             <button
               class={`icon-btn mode-toggle ${mode === "graph" ? "active" : ""}`}
-              title={mode === "graph" ? "切换到文献精读模式" : "切换到知识图谱模式"}
+              title={mode === "graph" ? "切换到文献精读模式" : "切换到知识图谱模式（🕸 论文 / 方法 / 数据集的关系图）"}
+              aria-label={mode === "graph" ? "切换到文献精读模式" : "打开知识图谱"}
+              aria-pressed={mode === "graph"}
               onClick={() => (mode === "graph" ? switchToReading() : void switchToGraph())}
             >
               {mode === "graph" ? "📖" : "🕸"}
