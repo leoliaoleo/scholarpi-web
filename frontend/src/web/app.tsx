@@ -394,7 +394,7 @@ function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: 
       <div class="start-inner">
         <div class="start-logo">π</div>
         <h1>ScholarPi Web</h1>
-        <p class="start-sub">为组会读英文论文：抓住贡献，点击结论核验原文，带走阅读笔记。</p>
+        <p class="start-sub">把 30 页英文论文，拆成可点击核验原句的组会笔记。</p>
         {error && <div class="error-box">{error}</div>}
         <div class="start-cta">
           <button class="primary start-main" disabled={!example} onClick={() => example && onOpen(example)}>
@@ -405,7 +405,7 @@ function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: 
           </button>
         </div>
         <p class="muted small start-tag">
-          示例精读 · 预置内容：{example ? example.title : "内置论文"} 的精读报告与页码证据随站打包，PDF 走本地静态资源，点开不消耗任何模型额度。
+          示例精读 · 预置内容：{example ? example.title : "内置论文"} 的报告和页码证据随站打包，PDF 读本地静态文件，点开不消耗模型额度。
         </p>
         {!!others.length && (
           <div class="start-grid">
