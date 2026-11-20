@@ -89,6 +89,16 @@ test("核心贡献摘要：结论被拆成多条，首屏只铺前三条", () =>
   assert.deepEqual(nested, ["说明：", "- 一\n  续行", "- 二", "注：以上。"]);
 });
 
+test("预置结论互不相同：首屏锚点靠它认出「这就是那篇预置精读」", () => {
+  const presets = [attentionPreset, resnetPreset, bertPreset];
+  for (const p of presets) {
+    assert.ok(p.conclusion?.trim().length > 40, `${p.itemKey} 的结论太短，锚不住首屏`);
+    assert.ok(splitBullets(p.conclusion).length >= 2, `${p.itemKey} 的结论至少要能拆出两条贡献`);
+  }
+  const seen = new Set(presets.map((p) => p.conclusion));
+  assert.equal(seen.size, presets.length, "三篇预置结论必须互不相同，否则锚点会认错人");
+});
+
 // ---------------------------------------------------------------- multi-resolution shell
 
 const SCREENS: [number, number][] = [

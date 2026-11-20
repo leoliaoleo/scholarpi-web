@@ -607,6 +607,8 @@ export function AutoScroll({
     if (!settled.current) {
       // 转录还在从磁盘里读：等第一条消息到了再定位，否则锚点找不到、直接掉到底部。
       if (!el.querySelector(".turn, .msg")) return;
+      // 要锚到某一行时，等那一行真的渲染出来再定位（长报告会分帧补齐）。
+      if (anchor && !el.querySelector(anchor)) return;
       settled.current = true;
       const at = memoryKey ? scrollMemory.get(memoryKey) : undefined;
       if (at != null) el.scrollTop = at;

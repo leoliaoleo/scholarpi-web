@@ -291,7 +291,8 @@ export function PanelApp() {
   // 有结论就默认展开：首访者要在第一屏看到核心贡献，而不是一个 📌 图标。
   const openConclusion = showConclusion ?? !!conclusion;
   // 预置精读是一篇已经写完的报告：首屏停在第一条核心贡献的开头，而不是全文末尾。
-  const presetReport = !!activeId && presetFor(ctx.ref.itemKey)?.title === (snap?.meta?.title || active?.title);
+  // 认结论而不是认标题——会话被重命名、preset 文案微调都不该让首屏退回全文末尾。
+  const presetReport = !!activeId && !!conclusion && conclusion === presetFor(ctx.ref.itemKey)?.conclusion;
 
   return (
     <div class="app" onClick={onLink as any}>
