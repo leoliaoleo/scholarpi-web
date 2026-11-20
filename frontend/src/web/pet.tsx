@@ -1,12 +1,13 @@
 /**
  * 蓝发小鲸鱼 · Pi 科研小助手 —— the floating web desktop pet.
  *
- * The whale is inline SVG: same-origin, no extra request, transparent around the
- * silhouette so it never veils the page. It breathes, it is draggable, and it
- * hosts the 1 分钟带逛导览 — each step frames the region it is talking about by
- * measuring that element, so the highlight keeps up when a panel opens or a skill
- * fills the chat.  Where it may not go is decided by the layout, not by a magic
- * number: the send box and the 划词 dock are always left clickable.
+ * The mascot is the original illustration, served from /mascot.png and cut out
+ * of its white ground once at load, so she stands on the page with no box around
+ * her. She breathes, she is draggable, and she hosts the 1 分钟带逛导览 — each
+ * step frames the region it is talking about by measuring that element, so the
+ * highlight keeps up when a panel opens or a skill fills the chat. Where she may
+ * not go is decided by the layout, not by a magic number: the send box, the 划词
+ * dock and the bottom-right watermark stay clear.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { getApi } from "./api";
@@ -17,10 +18,13 @@ const K_POS = "scholarpi.pet.pos";
 const K_MIN = "scholarpi.pet.min";
 const K_SEEN = "scholarpi.pet.seen";
 
-/** Whale box, plus the panels it must never sit on top of. */
-const W = 92;
-const H = 108;
+/** Whale box (the art is 897x1024, so 110x126 keeps her exact ratio), plus the
+ *  panels she must never sit on top of. */
+const W = 110;
+const H = 126;
 const MIN_W = 44;
+/** 右下角的 Made with Qoder 水印住在视口底边这条带子里，她绝不落到下面去。 */
+const BOTTOM = 56;
 const AVOID = [".pane-chat .composer", ".quick-dock"];
 
 interface Box {
@@ -76,9 +80,9 @@ async function ensurePaper(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 // placement
 
-/** The lowest the whale may sit: above the send box and above the quick dock. */
+/** The lowest the whale may sit: above the send box, the quick dock and the watermark. */
 function floorY(h: number): number {
-  let y = window.innerHeight - h - 10;
+  let y = window.innerHeight - h - BOTTOM;
   for (const sel of AVOID) {
     const el = one<HTMLElement>(sel);
     if (!el) continue;
@@ -100,7 +104,7 @@ function clampPos(x: number, y: number, w = W, h = H): Box {
 /** Bottom-right of the reading area: against the chat pane, never on its send box. */
 function homePos(): Box {
   const chat = one<HTMLElement>(".pane-chat");
-  const right = chat ? chat.getBoundingClientRect().left : window.innerWidth;
+  const right = chat ? chat.getBoundingClientRect().left : window.innerWidth - 20;
   return clampPos(right - W - 18, floorY(H));
 }
 
@@ -110,143 +114,148 @@ function startPos(): Box {
 }
 
 // ---------------------------------------------------------------------------
-// the mascot
+// the mascot: the original illustration, knocked out of its white ground
+
+const SPRITE = "/mascot.png";
+/** 抠图只做一次，边长 420 够撑到 2x 屏，又不会让首帧等太久。 */
+const SPRITE_EDGE = 420;
+
+let spritePromise: Promise<string | null> | null = null;
+
+/**
+ * 她身上有白蕾丝发带、白围裙和白袜，按颜色全局去白会把这些一起擦掉，所以先只
+ * 清除与画框连成一片的白。但呆毛卷成的圈、手臂与长发之间还封着几块同样的背景
+ * 白：它们连不上画框，得靠「面积足够大的同色封闭色块」这条规则认出来。
+ */
+function cutout(img: HTMLImageElement): string | null {
+  const k = Math.min(1, SPRITE_EDGE / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+  const w = Math.max(1, Math.round((img.naturalWidth || 1) * k));
+  const h = Math.max(1, Math.round((img.naturalHeight || 1) * k));
+  const cv = document.createElement("canvas");
+  cv.width = w;
+  cv.height = h;
+  const ctx = cv.getContext("2d", { willReadFrequently: true });
+  if (!ctx) return null;
+  ctx.drawImage(img, 0, 0, w, h);
+  const frame = ctx.getImageData(0, 0, w, h);
+  const d = frame.data;
+  const n = w * h;
+
+  // 底色从画框一圈取中位数，别硬编码：换一张图也照样认
+  const ring: number[] = [];
+  for (let x = 0; x < w; x++) {
+    ring.push(x, (h - 1) * w + x);
+  }
+  for (let y = 0; y < h; y++) {
+    ring.push(y * w, y * w + w - 1);
+  }
+  const chan = (c: number) => {
+    const v = ring.map((i) => d[i * 4 + c]).sort((a, b) => a - b);
+    return v[v.length >> 1];
+  };
+  const bgc = [chan(0), chan(1), chan(2)];
+  /** 平涂背景：和底色几乎一模一样，没有笔触也没有阴影。 */
+  const flat = (i: number) =>
+    Math.abs(d[i * 4] - bgc[0]) <= 2 && Math.abs(d[i * 4 + 1] - bgc[1]) <= 2 && Math.abs(d[i * 4 + 2] - bgc[2]) <= 2;
+  /** 泛白：背景连同它的一圈 JPEG 毛边。 */
+  const pale = (i: number, lo: number) => {
+    const m = Math.min(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]);
+    return m >= lo && Math.max(d[i * 4], d[i * 4 + 1], d[i * 4 + 2]) - m <= 28;
+  };
+
+  const bg = new Uint8Array(n);
+  const queue: number[] = [];
+  const eat = (i: number, lo: number) => {
+    if (!bg[i] && pale(i, lo)) {
+      bg[i] = 1;
+      queue.push(i);
+    }
+  };
+  const near = (i: number, lo: number) => {
+    const x = i % w;
+    if (x > 0) eat(i - 1, lo);
+    if (x < w - 1) eat(i + 1, lo);
+    if (i >= w) eat(i - w, lo);
+    if (i + w < n) eat(i + w, lo);
+  };
+  for (const seed of ring) eat(seed, 236);
+  for (let head = 0; head < queue.length; head++) near(queue[head], 236);
+  // 白底边缘那圈淡灰毛边：向外再吃一格，够亮才吃，不碰描线
+  const frontier = queue.length;
+  for (let head = 0; head < frontier; head++) near(queue[head], 208);
+
+  // 被封在角色身上的平涂背景：面积占画面 0.03% 以上才算，免得在衣服高光上打个洞
+  const seen = new Uint8Array(n);
+  for (let s = 0; s < n; s++) {
+    if (seen[s] || bg[s] || !flat(s)) continue;
+    const comp: number[] = [s];
+    seen[s] = 1;
+    let touches = false;
+    for (let head = 0; head < comp.length; head++) {
+      const i = comp[head];
+      const x = i % w;
+      if (x === 0 || x === w - 1 || i < w || i + w >= n) touches = true;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i >= w ? i - w : -1, i + w < n ? i + w : -1]) {
+        if (j >= 0 && !seen[j] && !bg[j] && flat(j)) {
+          seen[j] = 1;
+          comp.push(j);
+        }
+      }
+    }
+    if (touches || comp.length < n * 0.0003) continue;
+    for (const i of comp) bg[i] = 1;
+    for (const i of comp) near(i, 236);
+  }
+
+  for (let i = 0; i < n; i++) {
+    if (bg[i]) {
+      d[i * 4 + 3] = 0;
+      continue;
+    }
+    const x = i % w;
+    const edge = (x > 0 && bg[i - 1]) || (x < w - 1 && bg[i + 1]) || (i >= w && bg[i - w]) || (i + w < n && bg[i + w]);
+    if (edge && (d[i * 4] * 3 + d[i * 4 + 1] * 6 + d[i * 4 + 2]) / 10 >= 228) d[i * 4 + 3] = 150;
+  }
+  ctx.putImageData(frame, 0, 0);
+  return cv.toDataURL("image/png");
+}
+
+function loadSprite(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        resolve(cutout(img));
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = SPRITE;
+  });
+}
+
+/** 处理结果缓存在模块里：立绘、迷你气泡和卡片头像共用同一张透明图。 */
+function useSprite(): string {
+  const [src, setSrc] = useState(SPRITE);
+  useEffect(() => {
+    let live = true;
+    if (!spritePromise) spritePromise = loadSprite();
+    spritePromise.then((url) => {
+      if (live && url) setSrc(url);
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+  return src;
+}
 
 function Whale({ face = false }: { face?: boolean }) {
-  if (face) {
-    // A crop of the same drawing: the mini bubble and the card avatar show her face.
-    return (
-      <svg class="pet-svg pet-svg-face" viewBox="50 24 28 36" aria-hidden="true" focusable="false">
-        <circle cx="64" cy="46" r="11" fill="#ffe9dc" />
-        <path d="M53 42 C54 30 60 27 64 27 C68 27 74 30 75 42 C70 36 58 36 53 42 Z" fill="#6cb4ee" />
-        <path d="M55 30 C58 26 70 26 73 30 C69 28 59 28 55 30 Z" fill="#fff" />
-        <ellipse cx="58.6" cy="46" rx="2.5" ry="3.1" fill="#fff" />
-        <circle cx="58.8" cy="46.4" r="1.9" fill="#2f6fbf" />
-        <circle cx="58.1" cy="45.6" r=".7" fill="#fff" />
-        <ellipse cx="69.4" cy="46" rx="2.5" ry="3.1" fill="#fff" />
-        <circle cx="69.2" cy="46.4" r="1.9" fill="#2f6fbf" />
-        <circle cx="68.5" cy="45.6" r=".7" fill="#fff" />
-        <ellipse cx="55" cy="50.5" rx="2.2" ry="1.3" fill="#ffb0b0" opacity=".55" />
-        <ellipse cx="73" cy="50.5" rx="2.2" ry="1.3" fill="#ffb0b0" opacity=".55" />
-        <path d="M61.5 51.5 Q64 54 66.5 51.5" fill="none" stroke="#c76b6b" strokeWidth="1.2" strokeLinecap="round" />
-      </svg>
-    );
-  }
-  return (
-    <svg class="pet-svg" viewBox="0 0 128 150" role="img" aria-label="蓝发小鲸鱼女仆 · Pi 科研小助手">
-      <defs>
-        <linearGradient id="piHair" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#8fd0ff" />
-          <stop offset="1" stopColor="#4a92d6" />
-        </linearGradient>
-        <linearGradient id="piDress" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#31549a" />
-          <stop offset="1" stopColor="#1d3263" />
-        </linearGradient>
-        <linearGradient id="piTail" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#7ec3f3" />
-          <stop offset="1" stopColor="#468ed3" />
-        </linearGradient>
-      </defs>
-
-      <ellipse class="pet-shadow" cx="64" cy="146" rx="25" ry="4" fill="#16233f" opacity=".16" />
-
-      {/* 鲸尾，坐在裙子后面 */}
-      <path
-        class="pet-tail"
-        d="M64 110 C58 121 46 129 32 127 C39 141 56 144 64 132 C72 144 89 141 96 127 C82 129 70 121 64 110 Z"
-        fill="url(#piTail)"
-      />
-
-      {/* 女仆裙与围裙 */}
-      <g class="pet-body">
-        <path d="M64 72 C47 72 39 90 37 106 C35 121 47 129 64 129 C81 129 93 121 91 106 C89 90 81 72 64 72 Z" fill="url(#piDress)" />
-        <path d="M40 116 C50 125 78 125 88 116" fill="none" stroke="#f2c14e" strokeWidth="3.4" strokeLinecap="round" />
-        <path
-          d="M64 82 C55 82 50 90 49 101 C48 113 54 123 64 123 C74 123 80 113 79 101 C78 90 73 82 64 82 Z"
-          fill="#fbfdff"
-          stroke="#e2e9f4"
-          strokeWidth="1.2"
-        />
-        <path d="M49.5 95 C58 99 70 99 78.5 95" fill="none" stroke="#dbe6f5" strokeWidth="2.2" />
-        {/* 围裙上的小鲸鱼 */}
-        <g transform="translate(62 108)">
-          <ellipse cx="-1.5" cy="0" rx="7" ry="4.4" fill="#5aa9e6" />
-          <path d="M4.8 -0.8 C7 -2.6 9.2 -3.8 10.8 -3.2 C10.2 -0.8 8.6 1.8 5.6 2.4 Z" fill="#5aa9e6" />
-          <circle cx="-6" cy="-1.1" r=".95" fill="#1d3263" />
-          <path d="M-4 -4.8 C-3.2 -6.6 -3.8 -7.8 -5 -8.8" fill="none" stroke="#8fd0ff" strokeWidth="1.2" strokeLinecap="round" />
-        </g>
-        {/* 领口蝴蝶结 */}
-        <g transform="translate(64 85)">
-          <ellipse cx="-5" cy="0" rx="4.2" ry="3" fill="#f2c14e" />
-          <ellipse cx="5" cy="0" rx="4.2" ry="3" fill="#f2c14e" />
-          <circle r="1.9" fill="#d9a431" />
-        </g>
-        {/* 鳍状小手 */}
-        <ellipse cx="39" cy="99" rx="6.4" ry="11.5" fill="#22417a" transform="rotate(12 39 99)" />
-        <ellipse cx="89" cy="99" rx="6.4" ry="11.5" fill="#22417a" transform="rotate(-12 89 99)" />
-      </g>
-
-      {/* 头 */}
-      <g class="pet-head">
-        <ellipse cx="64" cy="50" rx="34" ry="33" fill="url(#piHair)" />
-        <path d="M32 46 C28 58 30 70 35 77 C39 72 37 56 39 47 Z" fill="#4a92d6" />
-        <path d="M96 46 C100 58 98 70 93 77 C89 72 91 56 89 47 Z" fill="#4a92d6" />
-        <circle cx="64" cy="52" r="27" fill="#ffe9dc" />
-        {/* 刘海 */}
-        <path d="M37 47 C38 29 50 21 64 21 C78 21 90 29 91 47 C84 38 76 43 64 37 C52 43 44 38 37 47 Z" fill="url(#piHair)" />
-        {/* 呆毛 */}
-        <path class="pet-ahoge" d="M64 22 C60 12 66 4 76 5 C68 9 67 15 68 22 Z" fill="#8fd0ff" stroke="#5b9bd8" strokeWidth="1" />
-        {/* 女仆头饰 */}
-        <path d="M40 31 C46 15 82 15 88 31 C78 24 50 24 40 31 Z" fill="#fff" stroke="#e2e9f4" strokeWidth="1.2" />
-        <g fill="#fff">
-          <circle cx="42" cy="31" r="3.1" />
-          <circle cx="49.5" cy="27.4" r="3.3" />
-          <circle cx="57" cy="25.4" r="3.3" />
-          <circle cx="64.5" cy="24.8" r="3.3" />
-          <circle cx="72" cy="25.6" r="3.3" />
-          <circle cx="79.5" cy="27.6" r="3.3" />
-          <circle cx="86.5" cy="31.2" r="3.1" />
-        </g>
-        {/* 两侧发带蝴蝶结 */}
-        <g transform="translate(37 33)">
-          <ellipse cx="-4.6" cy="0" rx="4.4" ry="3.2" fill="#5aa9e6" />
-          <ellipse cx="4.6" cy="0" rx="4.4" ry="3.2" fill="#5aa9e6" />
-          <circle r="2" fill="#3f86c9" />
-        </g>
-        <g transform="translate(91 33)">
-          <ellipse cx="-4.6" cy="0" rx="4.4" ry="3.2" fill="#5aa9e6" />
-          <ellipse cx="4.6" cy="0" rx="4.4" ry="3.2" fill="#5aa9e6" />
-          <circle r="2" fill="#3f86c9" />
-        </g>
-        {/* 大眼睛 */}
-        <g class="pet-eyes">
-          <ellipse cx="52" cy="56" rx="7" ry="8" fill="#fff" />
-          <circle cx="52.4" cy="57" r="5" fill="#2f6fbf" />
-          <circle cx="52.4" cy="57.4" r="2.5" fill="#152a4d" />
-          <circle cx="50.4" cy="54.8" r="1.9" fill="#fff" />
-          <circle cx="54.4" cy="59.6" r=".9" fill="#fff" opacity=".9" />
-          <path d="M45.4 52 C47 48 57 48 58.6 52" fill="none" stroke="#2c4a78" strokeWidth="1.5" strokeLinecap="round" />
-          <ellipse cx="76" cy="56" rx="7" ry="8" fill="#fff" />
-          <circle cx="75.6" cy="57" r="5" fill="#2f6fbf" />
-          <circle cx="75.6" cy="57.4" r="2.5" fill="#152a4d" />
-          <circle cx="73.6" cy="54.8" r="1.9" fill="#fff" />
-          <circle cx="77.6" cy="59.6" r=".9" fill="#fff" opacity=".9" />
-          <path d="M69.4 52 C71 48 81 48 82.6 52" fill="none" stroke="#2c4a78" strokeWidth="1.5" strokeLinecap="round" />
-        </g>
-        <ellipse cx="43" cy="64" rx="5.4" ry="3.1" fill="#ffb0b0" opacity=".5" />
-        <ellipse cx="85" cy="64" rx="5.4" ry="3.1" fill="#ffb0b0" opacity=".5" />
-        <path d="M59 66 Q64 71.5 69 66" fill="none" stroke="#c76b6b" strokeWidth="2.2" strokeLinecap="round" />
-      </g>
-
-      {/* 亮晶晶 */}
-      <g class="pet-spark" fill="#9ad4ff">
-        <path d="M14 40 l1.6 4.4 4.4 1.6 -4.4 1.6 -1.6 4.4 -1.6 -4.4 -4.4 -1.6 4.4 -1.6 Z" />
-        <path d="M112 32 l1.4 3.8 3.8 1.4 -3.8 1.4 -1.4 3.8 -1.4 -3.8 -3.8 -1.4 3.8 -1.4 Z" />
-        <path d="M104 76 l1.2 3.2 3.2 1.2 -3.2 1.2 -1.2 3.2 -1.2 -3.2 -3.2 -1.2 3.2 -1.2 Z" />
-      </g>
-    </svg>
-  );
+  const src = useSprite();
+  // 抠图还没好（或失败了）：把整张原图收进圆角画框，白底就不会糊在页面上
+  const cls = face ? "pet-face" : `pet-img${src === SPRITE ? " raw" : ""}`;
+  return <img class={cls} src={src} alt="" aria-hidden="true" draggable={false} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -618,12 +627,20 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
     ? { left: `${Math.max(8, window.innerWidth - MIN_W - 12)}px`, top: `${Math.min(pos.y + H - MIN_W, floorY(MIN_W))}px` }
     : { left: `${pos.x}px`, top: `${pos.y}px` };
 
-  // 气泡贴着鲸鱼向左展开，但整块都要留在屏幕里；尖角始终指回鲸鱼头顶
+  // 气泡贴着鲸鱼横向展开，整块都要留在屏幕里；头顶不如脚下宽敞就往下面开，尖角始终指回她
   const vw2 = window.innerWidth;
+  const vh2 = window.innerHeight;
   const bubW = Math.min(316, vw2 - 24);
   const bubLeft = Math.max(12, Math.min(pos.x + W + 6 - bubW, Math.max(12, vw2 - bubW - 12)));
   const tail = Math.max(20, Math.min(pos.x + 26 - bubLeft, bubW - 28));
-  const bubbleStyle = { width: `${bubW}px`, left: `${Math.round(bubLeft - pos.x)}px`, "--tail": `${Math.round(tail)}px` } as Style;
+  const down = pos.y < vh2 - pos.y - H;
+  const room = (down ? vh2 - pos.y - H : pos.y) - 16;
+  const bubbleStyle = {
+    width: `${bubW}px`,
+    left: `${Math.round(bubLeft - pos.x)}px`,
+    maxHeight: `${Math.max(132, Math.min(Math.round(vh2 * 0.62), room))}px`,
+    "--tail": `${Math.round(tail)}px`,
+  } as Style;
 
   return (
     <div class={min ? "pet min" : "pet"} style={anchor}>
@@ -666,7 +683,7 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
             —
           </button>
           {!!view && (
-            <div class="pet-bubble" style={bubbleStyle} role="dialog" aria-label="Pi 科研小助手">
+            <div class={down ? "pet-bubble down" : "pet-bubble"} style={bubbleStyle} role="dialog" aria-label="Pi 科研小助手">
               <div class="pet-bub-head">
                 <span class="pet-avatar">
                   <Whale face />

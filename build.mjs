@@ -34,6 +34,12 @@ async function vendor() {
   await copy(join(NM, "katex/dist/fonts"), join(OUT, "vendor/katex/fonts"));
 }
 
+/** Static files served from the site root: the mascot illustration and friends. */
+async function publicFiles() {
+  const src = join(SRC, "public");
+  if (existsSync(src)) await copy(src, OUT);
+}
+
 /**
  * The bundled demo papers ship as static files (manifest + per-page text index +
  * PDF), so a published site needs no server to open them.
@@ -66,6 +72,7 @@ async function run() {
   await rm(OUT, { recursive: true, force: true });
   await mkdir(join(OUT, "assets"), { recursive: true });
   await vendor();
+  await publicFiles();
   await papers();
 
   const options = {

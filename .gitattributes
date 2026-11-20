@@ -12,3 +12,8 @@
 
 # Preset demo papers must stay byte-identical.
 *.pdf binary
+
+# 桌宠立绘：字节流不能被换行符规范化碰。
+*.png binary
+*.jpg binary
+*.jpeg binary
