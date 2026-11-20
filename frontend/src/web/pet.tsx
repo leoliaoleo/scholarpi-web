@@ -69,7 +69,8 @@ async function ensurePaper(): Promise<boolean> {
   const paper = api.papers.list().find((p) => p.source === "demo") || api.papers.list()[0];
   if (!paper) return false;
   await api.openPaper(paper.itemKey);
-  return until(() => !!api.context.get().ref, 10000);
+  // 公网冷启动要把整篇 PDF 拉下来解析，十秒不够用
+  return until(() => !!api.context.get().ref, 30000);
 }
 
 // ---------------------------------------------------------------------------
@@ -328,9 +329,10 @@ function makeSteps(host: { current: { onShowGraph: () => void; onExpandRail: () 
       find: () => one(".region-hint") || one(".pages") || one(".pane-reader"),
       demo: async () => {
         let btn = regionButton();
-        if (!btn && (await ensurePaper())) {
-          // 线上 PDF 解析慢于 context.ref：等真实按钮出现，而不是固定等一会儿
-          await until(() => !!regionButton(), 8000);
+        if (!btn) {
+          // 线上 PDF 边下边解析：等真实按钮出现，而不是固定等一会儿
+          await ensurePaper();
+          await until(() => !!regionButton(), 12000);
           btn = regionButton();
         }
         if (!btn) return "还没找到「框图提问」：先在左侧打开一篇论文，它就在阅读器工具栏右侧。";
@@ -526,6 +528,7 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
     if (!fn || busy) return;
     bounce();
     setBusy(true);
+    setHint("稍等，我这就动手演示…");
     try {
       setHint(String(await fn()));
     } catch (e: any) {
@@ -669,7 +672,15 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
                   <Whale face />
                 </span>
                 <b>Pi 科研小助手</b>
-                <button class="pet-x" type="button" title="收起（Esc）" onClick={() => setView("")}>
+                <button
+                  class="pet-x"
+                  type="button"
+                  title="收起（Esc）"
+                  onClick={() => {
+                    if (view === "welcome") localStorage.setItem(K_SEEN, "1");
+                    setView("");
+                  }}
+                >
                   ×
                 </button>
               </div>
