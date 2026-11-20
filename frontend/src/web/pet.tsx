@@ -291,7 +291,7 @@ function makeSteps(host: { current: { onShowGraph: () => void; onExpandRail: () 
       title: "左侧文献库 · arXiv ID 一键抓取",
       say:
         "这里是我的家——个人文献知识库：3 篇内置论文已经精读好，批注、卡片、专题都齐了。点「⇪ 批量导入」，粘一行 1706.03762，剩下的抓取解析不用你动手。",
-      find: () => one(".kb-import") || one(".kb-tools") || one(".rail-body"),
+      find: () => one(".kb-import") || one(".kb-tools") || one(".rail-body") || one(".rail"),
       demo: async () => {
         // 文献栏可能是收起的，面板也是点了才出现：每步都等真实 DOM 到位再做下一步。
         host.current.onExpandRail();
@@ -329,7 +329,8 @@ function makeSteps(host: { current: { onShowGraph: () => void; onExpandRail: () 
       demo: async () => {
         let btn = regionButton();
         if (!btn && (await ensurePaper())) {
-          await sleep(700);
+          // 线上 PDF 解析慢于 context.ref：等真实按钮出现，而不是固定等一会儿
+          await until(() => !!regionButton(), 8000);
           btn = regionButton();
         }
         if (!btn) return "还没找到「框图提问」：先在左侧打开一篇论文，它就在阅读器工具栏右侧。";
