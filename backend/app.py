@@ -389,7 +389,7 @@ def relay():
             headers[name] = value
     if (payload.get("headers") or {}) and not allowed:
         return _cors(jsonify(error="blocked", message=f"不允许向 {host} 转发带密钥的请求")), 403
-    url, session, resp = target, requests.Session(), None
+    url, session, resp = _mirror_arxiv_pdf(target), requests.Session(), None
     for _ in range(5):
         try:
             call = session.post if method == "POST" else session.get
@@ -408,7 +408,7 @@ def relay():
             resp.close()
             if not nxt:
                 break
-            url, err = _safe_target(urljoin(url, nxt))
+            url, err = _safe_target(_mirror_arxiv_pdf(urljoin(url, nxt)))
             if err:
                 return _cors(jsonify(error="blocked", message=f"重定向被拒绝：{err}")), 400
             continue
@@ -427,10 +427,13 @@ def relay():
             if size > RELAY_MAX_BYTES:
                 resp.close()
                 return _cors(jsonify(error="too_large", message="文件超过大小限制")), 413
+        extra = {"Content-Disposition": "inline"}
+        cr = resp.headers.get("Content-Range")
+        if cr:
+            extra["Content-Range"] = cr
         resp.close()
         return _cors(
-            Response(bytes(buf), status=resp.status_code, mimetype="application/pdf",
-                     headers={"Content-Disposition": "inline"}),
+            Response(bytes(buf), status=resp.status_code, mimetype="application/pdf", headers=extra),
         )
 
     if not RELAY_TEXT_TYPES.match(ctype) and resp.status_code == 200:
@@ -690,7 +693,7 @@ def _cors(resp):
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Pi-Client, X-Session-Id"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     resp.headers["Access-Control-Max-Age"] = "600"
-    resp.headers["Access-Control-Expose-Headers"] = "Content-Type, Retry-After"
+    resp.headers["Access-Control-Expose-Headers"] = "Content-Type, Retry-After, Content-Range, Content-Length"
     return resp
 
 
