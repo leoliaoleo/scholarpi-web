@@ -33,6 +33,40 @@ export function plainCitations(md: string): string {
   });
 }
 
+export interface PageChip {
+  page: number;
+  /** 已经解码过的原文，交给 `api.openPage` 圈句子；没有就只跳页。 */
+  quote: string;
+}
+
+/** 报告里真实可点的页码证据：欢迎区的「示例预览」复用同一批芯片，不另写一套引用。 */
+export function pageChips(md: string): PageChip[] {
+  const CHIP = /\[p\.\s*(\d+)\]\(page:(\d+)(?:\?q=([^)\s]+))?\)/g;
+  const out: PageChip[] = [];
+  for (const m of String(md || "").matchAll(CHIP)) {
+    const page = Number(m[2]);
+    if (!page) continue;
+    let quote = "";
+    try {
+      quote = decodeURIComponent(String(m[3] || "").replace(/\+/g, " ")).trim();
+    } catch {
+      quote = "";
+    }
+    out.push({ page, quote });
+  }
+  return out;
+}
+
+/** 收成预览用的一行纯文本：链接降级成页码、公式与强调符号去掉，行首的列表符也不留。 */
+export function plainLine(md: string): string {
+  return plainCitations(md)
+    .replace(/\$\$?[^$]*\$\$?/g, "")
+    .replace(/[*_`>#|]/g, "")
+    .replace(/^\s*[-+]\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export interface NoteSource {
   /** 论文标题；对比矩阵一类的多文献任务传任务名。 */
   title: string;

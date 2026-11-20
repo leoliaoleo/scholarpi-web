@@ -320,6 +320,23 @@ button.start-main {
 }
 button.start-side { font-size: calc(13px * var(--site-type, 1)); padding: calc(8px * var(--site-space, 1)) calc(14px * var(--site-space, 1)); }
 .start-tag { max-width: 64ch; margin-bottom: calc(16px * var(--site-space, 1)) !important; color: var(--muted); }
+/* 产品名退成一行小字：主标题只说清楚这件事能换来什么。 */
+.start-kicker { margin-bottom: calc(5px * var(--site-space, 1)); letter-spacing: 0.02em; }
+/* 示例预览：一行真实结论带真实页码芯片，点开之前就知道会得到什么。 */
+.start-preview {
+  max-width: 64ch;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent);
+  border-radius: calc(var(--site-radius, 8px) * 0.5);
+  background: var(--bg2);
+  padding: calc(10px * var(--site-space, 1)) calc(12px * var(--site-space, 1));
+  margin-bottom: calc(16px * var(--site-space, 1));
+}
+.sp-head { display: flex; align-items: center; flex-wrap: wrap; gap: calc(7px * var(--site-space, 1)); }
+.sp-title { font-size: calc(11.5px * var(--site-type, 1)); }
+.start-preview .sp-text { margin: calc(6px * var(--site-space, 1)) 0 calc(8px * var(--site-space, 1)); font-size: calc(13.5px * var(--site-type, 1)); line-height: 1.65; color: var(--fg); }
+.sp-chips { display: flex; align-items: center; flex-wrap: wrap; gap: calc(5px * var(--site-space, 1)); }
+button.sp-chip { font-size: calc(11.5px * var(--site-type, 1)); padding: calc(1px * var(--site-space, 1)) calc(7px * var(--site-space, 1)); color: var(--accent); border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 .sc-badge {
   align-self: flex-start;
   font-size: calc(10.5px * var(--site-type, 1));
@@ -1002,6 +1019,12 @@ button.start-side { font-size: calc(13px * var(--site-type, 1)); padding: calc(8
   padding: calc(4px * var(--site-space, 1)) calc(6px * var(--site-space, 1));
 }
 .kb-select-bar .small { flex: 1 1 auto; }
+/* 「跨篇对比」把左栏叫过来时，让多选条闪一下：指路不用再多一句话。 */
+.kb-flash { animation: kb-flash calc(1.1s * var(--site-motion, 1)) ease-out 2; }
+@keyframes kb-flash {
+  from { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+  to { box-shadow: inset 0 0 0 1px transparent; }
+}
 /* 首屏只留检索、列表和导入：备份 / MCP / 模型设置收在「⋯ 更多」里。 */
 .kb-more {
   display: flex;

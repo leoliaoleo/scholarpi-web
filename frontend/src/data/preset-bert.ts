@@ -9,12 +9,11 @@ const md = String.raw;
 export const bertPreset = {
   itemKey: "1810.04805",
   title: "BERT 精读：完形填空如何统一 NLP 预训练",
-  conclusion: md`- **动机**：GPT/ELMo 的预训练目标是单向的，限制了架构选择与 token 级任务的表现（p.1）
-- **做法 1**：MLM——随机挖掉 15% 的 WordPiece 再预测，80/10/10 替换策略缓解失配（p.4）
-- **做法 2**：NSP——句对二分类，让表示学到句间关系（p.4）
-- **做法 3**：统一输入表示（token + segment + position，[CLS]/[SEP]）+「预训练一次、每个任务微调一个头」（p.3–4）
-- **结果**：GLUE 平均 82.1（LARGE）、榜单 80.5 vs GPT 72.8；SQuAD v1.1 单模型超过以往集成（p.6）
-- **规模**：BASE $L{=}12,H{=}768,A{=}12$, 110M；LARGE $L{=}24,H{=}1024,A{=}16$, 340M（p.3）`,
+  conclusion: md`- **解决什么问题**：预训练目标一直是单向语言模型，这既限定了能用的架构，也让需要两侧上下文的 token 级任务做不好。${cite(1, "The major limitation is that standard language models are unidirectional, and this limits the choice of architectures that can be used during pre-training")}${cite(1, "where it is crucial to incorporate context from both directions")}
+- **怎么做**：把「完形填空」当成预训练任务——每个序列随机遮住 15% 的 WordPiece，让模型双向把它们猜回来。${cite(4, "In all of our experiments, we mask 15% of all WordPiece tokens in each sequence at random")}
+- **结果如何**：十一个 NLP 任务刷新最好成绩，GLUE 榜单 80.5 对 GPT 的 72.8，单个模型的 SQuAD 也超过以往的集成。${cite(1, "It obtains new state-of-the-art results on eleven natural language processing tasks")}${cite(6, "BERTLARGE obtains a score of 80.5, compared to OpenAI GPT, which obtains 72.8")}${cite(6, "our single BERT model outperforms the top ensemble system in terms of F1 score")}
+- **为什么行得通**：一套架构跨任务复用，编码器用双向自注意力，把左右上下文在同一层里融进同一个表示。${cite(3, "A distinctive feature of BERT is its uniﬁed architecture across different tasks")}${cite(3, "the BERT Transformer uses bidirectional self-attention, while the GPT")}
+- **代价与边界**：去掉 NSP 会让 QNLI / MNLI / SQuAD 明显掉点，微调在小数据集上还不稳，得多跑几次随机重启。${cite(8, "removing NSP hurts performance signiﬁcantly on QNLI, MNLI, and SQuAD")}${cite(6, "was sometimes unstable on small datasets, so we ran several random restarts")} 遮罩比例、统一输入表示与模型规模放在下面的方法拆解里。`,
   turns: [
     {
       q: "BERT 的核心创新点是什么？它相对 OpenAI GPT 的差别到底在哪一层？",

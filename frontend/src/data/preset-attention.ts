@@ -12,11 +12,11 @@ const md = String.raw;
 export const attentionPreset = {
   itemKey: "1706.03762",
   title: "Transformer 精读：注意力如何取代循环",
-  conclusion: md`- **范式**：编码器与解码器各 $N=6$ 层，子层 = 多头自注意力 + 逐位置 FFN，外挂残差与 LayerNorm（p.3）
-- **核心公式**：$\mathrm{Attention}(Q,K,V)=\mathrm{softmax}(QK^{\top}/\sqrt{d_k})\,V$，$h=8$，$d_k=d_v=d_{model}/h=64$（p.4–5）
-- **位置信息**：正弦位置编码，任意偏移下 $PE_{pos+k}$ 是 $PE_{pos}$ 的线性函数（p.6）
-- **结果**：WMT14 EN-DE 28.4 / EN-FR 41.8 BLEU，big 模型 8×P100 训 3.5 天（p.7–8）
-- **代价**：自注意力每层 $O(n^2\cdot d)$，长序列需要邻域限制等稀疏化手段（p.6–7）`,
+  conclusion: md`- **解决什么问题**：循环模型必须一步接一步地算，训练无法在单个样本内并行，长句还会把 batch 压死。${cite(2, "This inherently sequential nature precludes parallelization within training examples, which becomes critical at longer sequence lengths, as memory constraints limit batching across examples")}
+- **怎么做**：整套模型只留「多头自注意力 + 逐位置前馈」两种子层，编码与解码各堆 $N=6$ 层，外面套残差与层归一化。${cite(3, "The encoder is composed of a stack of N = 6 identical layers")}
+- **结果如何**：WMT14 EN-DE 28.4 / EN-FR 41.8 BLEU，把此前所有模型（含集成）甩开 2.0 BLEU 以上。${cite(8, "the big transformer model (Transformer (big) in Table 2) outperforms the best previously reported models (including ensembles) by more than 2.0 BLEU, establishing a new state-of-the-art BLEU score of 28.4")}
+- **为什么行得通**：任意两个位置之间只隔一条注意力边，路径长度从 $O(n)$ 降到 $O(1)$；句子级翻译里序列长度小于表示维度，复杂度和并行度双赢。${cite(7, "length n is smaller than the representation dimensionality d, which is most often the case with sentence representations used by state-of-the-art models in machine translations")}
+- **代价与边界**：自注意力每层 $O(n^2\cdot d)$，长序列要靠邻域限制一类的稀疏化手段。${cite(7, "self-attention could be restricted to considering only a neighborhood of size r in the input sequence centered around the respective output position")} 缩放因子的推导、多头配置与训练配方都放在下面的方法拆解里。`,
   turns: [
     {
       q: "先给我一个结构化的核心创新点总结：这篇论文到底新在哪里？证据也一起给出。",

@@ -95,6 +95,12 @@ button { font: inherit; color: inherit; }
 /* 复制 / 下载笔记：跟着报告走，剪贴板被拦时把可选中的文本摊开。 */
 .note-actions { display: flex; flex-wrap: wrap; gap: calc(6px * var(--site-space, 1)); align-items: center; margin-top: calc(7px * var(--site-space, 1)); }
 .note-actions .chip { font-size: calc(12px * var(--site-type, 1)); }
+/* 操作组的名字留在最前面，两个按钮才知道自己服务的是「整篇」还是「本条」。 */
+.note-group { letter-spacing: 0.02em; }
+/* 复制成功只在按钮自己身上亮一下，不额外占一行。 */
+.note-actions .chip.note-copied { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); }
+/* 剪贴板被拦：兜底的下载按钮要接手，就得先被看见。 */
+.note-actions .chip.note-dl-alert { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 .note-status { flex: 1 1 100%; margin-top: calc(2px * var(--site-space, 1)); }
 .note-fallback { display: block; width: 100%; min-height: 84px; margin-top: calc(5px * var(--site-space, 1)); font-size: calc(11.5px * var(--site-type, 1)); font-family: ui-monospace, Menlo, Consolas, monospace; }
 .banner { padding: calc(6px * var(--site-space, 1)) calc(12px * var(--site-space, 1)); background: #f7f0dd; color: #5c4a1f; font-size: calc(12.5px * var(--site-type, 1)); }

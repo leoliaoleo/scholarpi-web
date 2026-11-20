@@ -357,14 +357,14 @@ function makeSteps(host: { current: { onShowGraph: () => void; onExpandRail: () 
       },
     },
     {
-      title: "右下角 4 大科研 Skills 工具箱",
+      title: "右下角「继续研究」4 个入口",
       say:
-        "文献侦察兵 🔭 找上下游、方法论解剖室 🔬 拆公式与训练细节、横向对比矩阵 📊 排多篇差异、Research Gap 🧭 挖选题。技能自己抓数据，Pi 只负责把它讲成人话。",
+        "找相关论文 🔭 顺藤摸瓜、拆解方法 🔬 讲清公式与训练细节、跨篇对比 📊 排多篇差异、寻找研究方向 🧭 给出可执行选题。",
       find: () => one(".skill-box") || one(".pane-chat"),
       demo: async () => {
         if (!(await ensurePaper())) return "文献库是空的：先在左上「⇪ 批量导入」粘一行 1706.03762。";
         api.events.emit({ type: "run-skill", skill: "anatomy" });
-        return "已替你按下「🔬 方法论解剖室」：右侧正在逐页解剖当前论文，结论都带 p.N 芯片。";
+        return "已按下「🔬 拆解方法」：右侧正在逐页解剖当前论文，结论都带 p.N 芯片。";
       },
     },
     {
@@ -588,7 +588,7 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
             return;
           }
           api.events.emit({ type: "run-skill", skill: "anatomy" });
-          setSay("🔬 方法论解剖室已启动：右侧正在逐页精读当前论文，每句结论都带 p.N 芯片。");
+          setSay("🔬 拆解方法已启动：右侧正在逐页精读当前论文，每句结论都带 p.N 芯片。");
         } else {
           host.current.onExpandRail();
           const list = api.papers.list();
@@ -599,7 +599,7 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
           if (!(await ensurePaper())) return;
           api.selection.set(list.slice(0, 3).map((p) => p.itemKey));
           api.events.emit({ type: "run-skill", skill: "matrix" });
-          setSay(`📊 已替你勾选 ${Math.min(3, list.length)} 篇并发起横向对比：右侧会生成创新点差异矩阵。`);
+          setSay(`📊 已勾选 ${Math.min(3, list.length)} 篇并发起横向对比：右侧会生成创新点差异表。`);
         }
       } finally {
         setBusy(false);

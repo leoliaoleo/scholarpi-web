@@ -3,6 +3,7 @@ import { clone, getApi, subscribe } from "./api";
 import { ActivityBar, AutoScroll, Composer, ConclusionDigest, MessageList, NoteActions, QuickError, Thumb, copyText, textOf } from "./components";
 import { Markdown } from "./markdown";
 import { arxivIdOf, buildNote, noteFileName, transcriptSections, type NoteSource } from "../shared/note";
+import { COPY_FLASH_MS } from "../shared/clipboard";
 import { presetFor } from "../core/presets";
 import { SkillBox } from "./skills";
 
@@ -409,6 +410,7 @@ export function PanelApp() {
           {!!conclusion && (
             <NoteActions
               label="精读报告"
+              group="导出笔记 · 整篇笔记"
               build={() => reportMarkdown(snap, ctx.ref.itemKey, conclusion, presetReport)}
               file={() => noteFileName(noteSourceOf(ctx.ref.itemKey, presetReport), "精读报告")}
             />
@@ -442,6 +444,7 @@ export function PanelApp() {
               !snap.isStreaming && snap.messages.some((m: any) => m.role === "assistant") ? (
                 <NoteActions
                   label="本条回答"
+                  copyLabel="复制本条回答"
                   build={() => answerMarkdown(snap, ctx.ref.itemKey, presetReport)}
                   file={() => noteFileName(noteSourceOf(ctx.ref.itemKey, presetReport), "回答笔记")}
                 />
@@ -527,11 +530,17 @@ export function QuickApp() {
   };
   /** 复制被浏览器拒绝时改下载 .md：小卡的回答同样值得留档，不能只留一个 no-op。 */
   const copyAnswer = async () => {
-    if (await copyText(resultText)) return setCopied("已复制到剪贴板");
+    if (await copyText(resultText)) return setCopied("已复制 ✓");
     const src = noteSourceOf(String(job.paper?.itemKey || ""), false);
     api.kb.download(noteFileName(src, "回答笔记"), buildNote(src, [{ heading: "回答", body: resultText }], { heading: "回答笔记" }), "text/markdown");
     setCopied("剪贴板不可用，已下载 .md");
   };
+  // 「已复制 ✓」只亮 2 秒；失败的说法要留着，别让人以为复制成功了。
+  useEffect(() => {
+    if (copied !== "已复制 ✓") return;
+    const t = setTimeout(() => setCopied(""), COPY_FLASH_MS);
+    return () => clearTimeout(t);
+  }, [copied]);
 
   return (
     <div class="app quick" onClick={onLink as any}>
@@ -594,7 +603,7 @@ export function QuickApp() {
       {resultText && !busy && (
         <div class="quick-actions">
           <button class="chip" onClick={() => void copyAnswer()} title="复制这段回答；浏览器拦住剪贴板时改为下载 .md" aria-label="复制这段回答">
-            {copied ? copied : "复制"}
+            {copied || "复制回答"}
           </button>
           <button class="chip" onClick={save} disabled={!!saved}>
             {saved ? "✓ 已保存为批注" : job.kind === "image" ? (job.annotationKey ? "写入图片批注评论" : "保存为图片批注") : "保存为高亮批注"}

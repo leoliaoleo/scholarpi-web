@@ -10,9 +10,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks"
 import type { Collection, ImportResult, KbSearchResult, PaperCard } from "../core/library";
 import { getItem, paperTitle, type Paper } from "../core/paper";
 import { clearSelection, selectedKeys, selectionChanges, toggleSelection } from "../core/selection";
+import { Emitter } from "../core/events";
 import { getApi, subscribe } from "./api";
 
 const api = getApi();
+
+/**
+ * 「跨篇对比」没勾够文献时把多选区拉到眼前。折叠态和窄屏抽屉里的左栏正是被这一次点击才挂载
+ * 的，组件内的订阅赶不上事件发出，所以在模块层先记一笔账：已经挂载的实例收到通知，刚刚挂载
+ * 的实例从初始 state 里读到同一次请求。计数递增，连点两次也会重新滚一次。
+ */
+const pickerFocus = new Emitter<number>();
+let focusNonce = 0;
+api.events.on((e) => {
+  if (e.type === "focus-library") pickerFocus.emit(++focusNonce);
+});
 
 interface Filter {
   collection: string;
@@ -61,6 +73,11 @@ export function LibraryRail({
   const [tags, setTags] = useState<{ tag: string; count: number }[]>([]);
   const [cardKey, setCardKey] = useState<string | null>(null);
   const [sel, setSel] = useState<string[]>(() => selectedKeys());
+  /** 「跨篇对比」在勾选不够时把左栏叫过来：多选条即使一篇没选也要看得见。 */
+  const [picker, setPicker] = useState(focusNonce > 0);
+  const [pulse, setPulse] = useState(focusNonce);
+  const [flash, setFlash] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
   const [panel, setPanel] = useState<"" | "import" | "backup">("");
   const [more, setMore] = useState(false);
   const [error, setError] = useState("");
@@ -81,15 +98,28 @@ export function LibraryRail({
   }, [reload, tick]);
 
   useEffect(() => subscribe(selectionChanges, (keys: string[]) => setSel([...keys])), []);
-  useEffect(() => {
-    const off = subscribe(api.events, (e: any) => {
+  useEffect(() => pickerFocus.on((n) => {
+    setPicker(true);
+    setPulse(n);
+  }), []);
+  useEffect(() => subscribe(api.events, (e: any) => {
       if (e.type === "library-changed" || e.type === "cards-changed") {
         void reload();
         setTick((t) => t + 1);
       }
-    });
-    return off;
-  }, [reload]);
+    }), [reload]);
+
+  // 左栏可能是刚刚才展开的（窄屏还是抽屉），等这一帧画完再滚到多选条。
+  useEffect(() => {
+    if (!pulse) return;
+    setFlash(true);
+    const scroll = setTimeout(() => barRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 90);
+    const dim = setTimeout(() => setFlash(false), 2600);
+    return () => {
+      clearTimeout(scroll);
+      clearTimeout(dim);
+    };
+  }, [pulse]);
 
   const visible = useMemo(() => {
     const inCol = filter.collection ? new Set(collections.find((c) => c.id === filter.collection)?.itemKeys || []) : null;
@@ -183,29 +213,35 @@ export function LibraryRail({
       {panel === "backup" && <BackupPanel onChanged={onChanged} onError={setError} />}
       {error && <div class="error-box">{error}</div>}
 
-      {sel.length > 0 && (
-        <div class="kb-select-bar">
-          <span class="small">已选 {sel.length} 篇</span>
+      {(sel.length > 0 || picker) && (
+        <div class={flash ? "kb-select-bar kb-flash" : "kb-select-bar"} ref={barRef}>
+          <span class="small">已选 {sel.length}/5 篇{sel.length < 2 ? "，至少选 2 篇" : ""}</span>
           <button
             class="chip primary"
             disabled={sel.length < 2}
-            title={sel.length < 2 ? "再勾选 1 篇（最多 5 篇）" : "在右侧会话中生成对比矩阵"}
+            title={sel.length < 2 ? "再勾选 1 篇（最多 5 篇）" : "用勾选的这些文献生成横向对比"}
             onClick={() => api.events.emit({ type: "run-skill", skill: "matrix" })}
           >
-            📊 对比矩阵
+            📊 生成对比
           </button>
-          <span class="muted small matrix-hint">{sel.length < 2 ? "先勾选 2–5 篇" : `这 ${sel.length} 篇横向对比`}</span>
-          <CollectionsPicker
-            collections={collections}
-            onPick={async (id) => {
-              for (const k of sel) await api.kb.addToCollection(id, k);
-              await reload();
-              onChanged();
-            }}
-          />
-          <button class="chip" onClick={() => clearSelection()}>
-            清除
-          </button>
+          {sel.length > 0 ? (
+            <>
+              <span class="muted small matrix-hint">{sel.length < 2 ? "再勾 1 篇就能生成" : `这 ${sel.length} 篇横向对比`}</span>
+              <CollectionsPicker
+                collections={collections}
+                onPick={async (id) => {
+                  for (const k of sel) await api.kb.addToCollection(id, k);
+                  await reload();
+                  onChanged();
+                }}
+              />
+              <button class="chip" onClick={() => clearSelection()}>
+                清除
+              </button>
+            </>
+          ) : (
+            <span class="muted small matrix-hint">在下方论文标题左侧勾选</span>
+          )}
         </div>
       )}
 
@@ -526,7 +562,7 @@ function PaperSection({
               class="p-check"
               type="checkbox"
               checked={sel.includes(p.itemKey)}
-              title="勾选后可生成对比矩阵 / 批量加入专题"
+              title="勾选后可生成横向对比 / 批量加入专题"
               onChange={() => toggleSelection(p.itemKey)}
             />
             <button class="paper" onClick={() => onOpen(p)} title={p.title}>

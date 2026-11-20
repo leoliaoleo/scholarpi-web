@@ -1,9 +1,9 @@
 /**
- * 科研 Skills 工具箱 — the four one-click procedures, mounted above the composer.
+ * 「继续研究」— the four one-click procedures, mounted above the composer.
  *
  * A skill gathers its deterministic data in `core/skills.ts` and returns a prompt; sending
  * it goes through the same `runtime.send()` the composer uses, so streaming, `[p. 5]` chips,
- * 划词/框图 and annotations all keep working. 文献侦察兵 additionally returns the candidates
+ * 划词/框图 and annotations all keep working. 找相关论文 additionally returns the candidates
  * it collected, which 一键入库 feeds straight into the library.
  */
 import { useCallback, useEffect, useState } from "preact/hooks";
@@ -50,7 +50,9 @@ export function SkillBox({
       }
       const selected = api.selection.get();
       if (meta.needs === "papers" && selected.length < 2) {
-        notify("先在左侧文献列表勾选 2–5 篇，再运行对比矩阵");
+        // 不代勾选、也不发请求：把左栏展开到多选条，让用户自己凑够第 2 篇。
+        api.events.emit({ type: "focus-library" });
+        notify(`已选 ${selected.length}/5 篇，至少选 2 篇：已展开左侧文献栏，勾选后点「生成对比」`);
         return;
       }
       setError("");
@@ -70,7 +72,7 @@ export function SkillBox({
     [ctx?.ref?.itemKey, busy, onSend, notify, skills],
   );
 
-  // the run is announced by core/skills, so the rail's 对比矩阵 button needs no extra plumbing
+  // the run is announced by core/skills, so the rail's 生成对比 button needs no extra plumbing
   useEffect(() => {
     const off = subscribe(api.events, (e: any) => {
       if (e.type === "skill-run") {
@@ -92,8 +94,8 @@ export function SkillBox({
   return (
     <div class="skill-box">
       <div class="skill-head">
-        <span class="skill-title">🧪 科研 Skills 工具箱</span>
-        <span class="muted small">技能会先自己抓数据，再把结构化任务交给 Pi</span>
+        <span class="skill-title">🧪 继续研究</span>
+        <span class="muted small">选一个方向，剩下的交给 Pi</span>
       </div>
       <div class="skill-chips">
         {skills.map((s) => (

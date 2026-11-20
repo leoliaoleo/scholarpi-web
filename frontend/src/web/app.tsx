@@ -8,7 +8,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { getItem, paperTitle, prefetchPdf, type Paper } from "../core/paper";
 import { gotoPage, paperKey as keyOf, refFromPaperKey, viewerState } from "../core/viewer-state";
-import { EXAMPLE_ITEM_KEY } from "../core/presets";
+import { EXAMPLE_ITEM_KEY, presetFor } from "../core/presets";
+import { splitBullets } from "../shared/markdown";
+import { pageChips, plainLine, type PageChip } from "../shared/note";
 import { clampChatW, NARROW_VW, railCollapsed } from "../shared/layout";
 import { statusLabel } from "../shared/errors";
 import { PanelApp, QuickApp } from "./chat";
@@ -173,8 +175,10 @@ export function App() {
     () =>
       subscribe(api.events, (e: any) => {
         if (e.type === "library-changed" || e.type === "skill-imported") refresh();
+        // 「跨篇对比」在没勾够文献时会把左栏叫回来，好让人自己去勾第 2 篇。
+        else if (e.type === "focus-library") openRail();
       }),
-    [refresh],
+    [refresh, openRail],
   );
 
   const addFile = async (file: File) => {
@@ -386,15 +390,17 @@ export function App() {
   );
 }
 
-function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: (i: Paper) => void; onUpload: () => void; error?: string }) {
+function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: (i: Paper, page?: number) => void; onUpload: () => void; error?: string }) {
   const example = demo.find((p) => p.itemKey === EXAMPLE_ITEM_KEY) || demo[0];
   const others = demo.filter((p) => p !== example);
+  const preview = example ? presetPreview(example.itemKey) : null;
   return (
     <div class="start">
       <div class="start-inner">
         <div class="start-logo">π</div>
-        <h1>ScholarPi Web</h1>
-        <p class="start-sub">把 30 页英文论文，拆成可点击核验原句的组会笔记。</p>
+        <div class="start-kicker muted small">ScholarPi Web · 科研文献智能体工作台</div>
+        <h1>让组会笔记，每条结论都有原文可查。</h1>
+        <p class="start-sub">精读单篇论文、横向比较多篇方法，带着页码证据导出 Markdown。</p>
         {error && <div class="error-box">{error}</div>}
         <div class="start-cta">
           <button class="primary start-main" disabled={!example} onClick={() => example && onOpen(example)}>
@@ -404,9 +410,29 @@ function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: 
             上传自己的 PDF
           </button>
         </div>
-        <p class="muted small start-tag">
-          示例精读 · 预置内容：{example ? example.title : "内置论文"} 的报告和页码证据随站打包，PDF 读本地静态文件，点开不消耗模型额度。
-        </p>
+        <p class="muted small start-tag">预置示例 · 无需 Key · 不消耗模型额度</p>
+        {preview && example && (
+          <div class="start-preview">
+            <div class="sp-head">
+              <span class="sc-badge">示例预览</span>
+              <span class="muted small sp-title">{preview.title}</span>
+            </div>
+            <p class="sp-text">{preview.line}</p>
+            <span class="sp-chips">
+              {preview.chips.map((c, i) => (
+                <button
+                  class="chip sp-chip"
+                  key={`${c.page}-${i}`}
+                  title={`跳到第 ${c.page} 页并圈出原句`}
+                  onClick={() => void api.openPage(example.itemKey, c.page, c.quote || undefined)}
+                >
+                  p. {c.page}
+                </button>
+              ))}
+              <span class="muted small sp-hint">点页码：左侧 PDF 跳页并圈出原句</span>
+            </span>
+          </div>
+        )}
         {!!others.length && (
           <div class="start-grid">
             {others.map((p) => (
@@ -423,4 +449,15 @@ function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: 
       </div>
     </div>
   );
+}
+
+/** 示例预览借用预置精读的第一条结论和它自己的页码芯片，欢迎区不再另写一套说法。 */
+function presetPreview(itemKey: string): { title: string; line: string; chips: PageChip[] } | null {
+  const preset = presetFor(itemKey);
+  if (!preset) return null;
+  const first = splitBullets(preset.conclusion)[0] || "";
+  const line = plainLine(first);
+  const chips = pageChips(first).slice(0, 3);
+  if (!line || !chips.length) return null;
+  return { title: preset.title, line, chips };
 }

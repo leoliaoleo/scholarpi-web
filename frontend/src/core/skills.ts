@@ -1,5 +1,5 @@
 /**
- * 科研 Skills 工具箱 — four one-click workflows that turn the agent into a research
+ * 「继续研究」— four one-click workflows that turn the agent into a research
  * assistant with a procedure, not just a chat box.
  *
  * A skill does the deterministic part in code (fetch the citation graph, collect the
@@ -32,31 +32,31 @@ export const SKILLS: SkillMeta[] = [
   {
     id: "scout",
     icon: "🔭",
-    label: "文献侦察兵",
-    desc: "找奠基工作与后续跟进，给出推荐阅读顺序",
+    label: "找相关论文",
+    desc: "奠基工作、后续跟进与推荐阅读顺序",
     needs: "paper",
-    hint: "引用关系来自 Semantic Scholar；抓到的论文可一键入库。",
+    hint: "以当前论文为种子找上下游，挑中的可以一键入库。",
   },
   {
     id: "anatomy",
     icon: "🔬",
-    label: "方法论解剖室",
+    label: "拆解方法",
     desc: "核心痛点 → 架构 → 损失函数 → 消融结论",
     needs: "paper",
-    hint: "按需读原文与图表，输出可复现的方法拆解。",
+    hint: "按需读原文与图表，产出可复现的方法拆解。",
   },
   {
     id: "matrix",
     icon: "📊",
-    label: "多篇横向对比矩阵",
-    desc: "2–5 篇文献生成对比表",
+    label: "跨篇对比",
+    desc: "2–5 篇文献排一张差异表",
     needs: "papers",
     hint: "在左侧文献列表勾选 2–5 篇后使用。",
   },
   {
     id: "gap",
     icon: "🧭",
-    label: "Research Gap 选题挖掘",
+    label: "寻找研究方向",
     desc: "从知识库归纳空白并给出可执行选题",
     needs: "topic",
     hint: "可填写感兴趣的方向，留空则分析整个知识库。",
@@ -216,7 +216,7 @@ async function buildScout(item: Paper, signal?: AbortSignal): Promise<{ prompt: 
   ];
   if (candidates.some((c) => c.group === "related")) groups.push("", section("related", "C. 主题相近的文献"));
 
-  const prompt = `【科研技能 · 文献侦察兵】以《${paperTitle(item)}》（item_key=${item.itemKey}${seedYear ? `，${seedYear} 年` : ""}）为种子论文做文献侦察。
+  const prompt = `【科研技能 · 找相关论文】以《${paperTitle(item)}》（item_key=${item.itemKey}${seedYear ? `，${seedYear} 年` : ""}）为种子论文做文献侦察。
 
 本地已抓到的引用关系（可直接使用，不必重复抓取）：
 ${groups.join("\n")}
@@ -268,7 +268,7 @@ async function buildAnatomy(item: Paper): Promise<{ prompt: string; note: string
   const known = [card.method && `核心方法：${clip(card.method, 400)}`, card.datasets && `数据集：${clip(card.datasets, 240)}`, card.metrics && `关键指标：${clip(card.metrics, 300)}`]
     .filter(Boolean)
     .join("\n");
-  const prompt = `【科研技能 · 方法论解剖室】解剖《${paperTitle(item)}》（item_key=${item.itemKey}）的方法。
+  const prompt = `【科研技能 · 拆解方法】解剖《${paperTitle(item)}》（item_key=${item.itemKey}）的方法。
 ${hasPdfLoaded(item) ? "PDF 已解析，可直接检索原文。" : "先用 paper_overview 看结构，再 paper_search 定位、paper_read 精读，不要一次读全文。"}
 ${known ? `\n知识库卡片里已有这些信息（核对后补充，不要照抄）：\n${known}\n` : ""}
 按四步解剖，每步都给出原文依据（页码写成可点击的 [p. N](page:N?q=…) 引用，公式用 $...$）：
@@ -285,11 +285,11 @@ ${known ? `\n知识库卡片里已有这些信息（核对后补充，不要照�
 }
 
 // ---------------------------------------------------------------------------
-// 3) 多篇横向对比矩阵
+// 3) 跨篇对比
 
 async function buildMatrix(itemKeys: string[]): Promise<{ prompt: string; note: string; candidates: SkillCandidate[] }> {
   const keys = [...new Set(itemKeys)].filter((k) => !!getItem(k)).slice(0, 5);
-  if (keys.length < 2) throw new Error("对比矩阵需要至少 2 篇文献：在左侧文献列表勾选后再运行。");
+  if (keys.length < 2) throw new Error("跨篇对比需要至少 2 篇文献：在左侧文献列表勾选后再运行。");
   const cards = await Promise.all(keys.map((k) => cardView(getItem(k)!)));
   const blocks = cards.map((c, i) =>
     [
@@ -306,7 +306,7 @@ async function buildMatrix(itemKeys: string[]): Promise<{ prompt: string; note: 
       .join("\n"),
   );
   const missing = cards.filter((c) => !c.method && !c.metrics);
-  const prompt = `【科研技能 · 多篇横向对比矩阵】对比下面 ${cards.length} 篇文献。知识库卡片先用来填表，缺的字段再查原文。
+  const prompt = `【科研技能 · 跨篇对比】对比下面 ${cards.length} 篇文献。知识库卡片先用来填表，缺的字段再查原文。
 
 ${blocks.join("\n\n")}
 
@@ -342,7 +342,7 @@ async function buildGap(query: string, item: Paper): Promise<{ prompt: string; n
     );
     note = blocks.length ? `用了知识库中 ${blocks.length} 篇的元数据卡片` : "知识库还没有卡片：先生成几张（kb_generate_card）或让模型边读边总结";
   }
-  const prompt = `【科研技能 · Research Gap 选题挖掘】${query ? `围绕方向「${query}」` : `基于整个知识库${item ? `（当前论文《${paperTitle(item)}》作为切入点）` : ""}`}找研究空白并产出选题。
+  const prompt = `【科研技能 · 寻找研究方向】${query ? `围绕方向「${query}」` : `基于整个知识库${item ? `（当前论文《${paperTitle(item)}》作为切入点）` : ""}`}找研究空白并产出选题。
 
 相关材料：
 ${blocks.join("\n\n") || "（知识库为空：先用 kb_import 导入几篇，或用 academic__arxiv_search 检索后入库。）"}

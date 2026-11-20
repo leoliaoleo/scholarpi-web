@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/ho
 import type { ComponentChildren } from "preact";
 import { Markdown } from "./markdown";
 import { splitBullets } from "../shared/markdown";
+import { COPY_FLASH_MS, EMPTY_NOTE_HINT, copyButtonLabel, copyHint } from "../shared/clipboard";
 import { classifyError, retryLabel, type ErrorAction } from "../shared/errors";
 import { getApi } from "./api";
 import { EXAMPLE_ITEM_KEY } from "../core/presets";
@@ -383,42 +384,51 @@ export async function copyText(text: string): Promise<boolean> {
 /**
  * 「复制 Markdown」+「下载笔记 .md」。
  *
- * 内容永远由 `build()` 现场生成，所以只会包含调用点所在的那份报告；复制被浏览器拒绝时
- * 自动降级成下载，并把文本摊在框里让用户自己选中，不静默吞掉失败。
+ * 内容永远由 `build()` 现场生成，所以只会包含调用点所在的那份报告；复制成功让按钮自己亮
+ * 2 秒「已复制 ✓」，被浏览器拒绝时把兜底的下载按钮点亮，不静默吞掉失败。
  */
-export function NoteActions({ build, file, label = "笔记" }: { build: () => string; file: () => string; label?: string }) {
-  const [status, setStatus] = useState<{ msg: string; text?: string } | null>(null);
+export function NoteActions({ build, file, label = "笔记", copyLabel = "复制 Markdown", group = "" }: { build: () => string; file: () => string; label?: string; copyLabel?: string; group?: string }) {
+  const [status, setStatus] = useState<{ msg: string; text?: string; blocked?: boolean } | null>(null);
+  const [flash, setFlash] = useState(false);
+  const done = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => {
     if (!status) return;
     const t = setTimeout(() => setStatus(null), 9000);
     return () => clearTimeout(t);
   }, [status]);
+  useEffect(() => () => clearTimeout(done.current), []);
   const api = getApi();
 
   const copy = async () => {
     const text = build();
-    if (!text.trim()) return setStatus({ msg: "报告还是空的：等回答生成完再复制。" });
-    if (await copyText(text)) return setStatus({ msg: `已复制${label}的 Markdown，可直接粘贴进笔记软件。` });
+    if (!text.trim()) return setStatus({ msg: EMPTY_NOTE_HINT });
+    if (await copyText(text)) {
+      setFlash(true);
+      clearTimeout(done.current);
+      done.current = setTimeout(() => setFlash(false), COPY_FLASH_MS);
+      return setStatus({ msg: copyHint(label, true) });
+    }
     api.kb.download(file(), text, "text/markdown");
-    setStatus({ msg: `浏览器不允许写入剪贴板：已改为下载 ${label} .md，也可以选中下面的文本自己复制。`, text });
+    setStatus({ msg: copyHint(label, false), text, blocked: true });
   };
   const save = () => {
     const text = build();
-    if (!text.trim()) return setStatus({ msg: "报告还是空的：等回答生成完再下载。" });
+    if (!text.trim()) return setStatus({ msg: EMPTY_NOTE_HINT });
     api.kb.download(file(), text, "text/markdown");
     setStatus({ msg: `已下载 ${label}笔记（Markdown，含页码引用）。` });
   };
 
   return (
     <div class="note-actions">
-      <button class="chip" onClick={() => void copy()} title={`把${label}正文连同标题、来源与页码引用复制成 Markdown`}>
-        复制 Markdown
+      {group && <span class="note-group muted small">{group}</span>}
+      <button class={flash ? "chip note-copied" : "chip"} data-state={flash ? "copied" : "idle"} onClick={() => void copy()} title={`把${label}正文连同标题、来源与页码引用复制成 Markdown`}>
+        {copyButtonLabel(flash, copyLabel)}
       </button>
-      <button class="chip" onClick={save} title={`下载 ${label} .md，可导入 Obsidian / Notion / Typora`}>
+      <button class={status?.blocked ? "chip note-dl-alert" : "chip"} onClick={save} title={`下载 ${label} .md，可导入 Obsidian / Notion / Typora`}>
         下载笔记 .md
       </button>
       {status && (
-        <div class="note-status muted small">
+        <div class="note-status muted small" role="status">
           {status.msg}
           {status.text != null && (
             <textarea

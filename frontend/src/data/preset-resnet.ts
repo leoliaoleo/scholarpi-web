@@ -9,11 +9,11 @@ const md = String.raw;
 export const resnetPreset = {
   itemKey: "1512.03385",
   title: "ResNet 精读：深度为什么不再有害",
-  conclusion: md`- **问题**：加深网络后训练误差反而升高，且不是过拟合（p.1，Fig.1）
-- **做法**：把要学的映射改写成残差 $F(x)=H(x)-x$，块输出 $y=F(x,\{W_i\})+x$；恒等捷径零参数、零额外计算（p.3）
-- **实现**：维度变化处才用 $1\times1$ 投影；深层用 1×1→3×3→1×1 的 bottleneck（p.3、p.6）
-- **结果**：同参数量下 plain-34 28.54 → ResNet-34 25.03 top-1；152 层单模型 top-5 4.49%，集成 3.57%（p.5–7）
-- **证据链**：1202 层也能把训练误差压到 <0.1%，但测试变差 → 瓶颈从「优化」转移到「正则」（p.8）`,
+  conclusion: md`- **解决什么问题**：网络加深后训练误差反而升高——这不是过拟合，而是求解器找不到那组「多几层也无害」的恒等解。${cite(1, "Unexpectedly, such degradation is not caused by overfitting, and adding more layers to a suitably deep model leads to higher")}${cite(1, "But experiments show that our current solvers on hand are unable to find solutions that")}
+- **怎么做**：不再让堆叠层直接拟合目标映射 $H(x)$，改成拟合残差 $F(x)=H(x)-x$，恒等捷径把输入原样加回来。${cite(3, "rather than expect stacked layers to approximate H(x), we explicitly let these layers approximate a residual function")}
+- **结果如何**：与 plain 网络参数量完全相同，却一路压过它；34 层又比 18 层更好，152 层单模型赢过此前所有集成结果。${cite(5, "the residual networks have no extra parameter compared to their plain counterparts")}${cite(5, "the 34-layer ResNet is better than the 18-layer ResNet")}${cite(7, "This single-model result outperforms all previous ensemble results")}
+- **为什么行得通**：捷径既不添参数也不添计算量；若恒等映射就是最优解，求解器只要把非线性层的权重压到零。${cite(2, "connections add neither extra parameter nor")}${cite(3, "if identity mappings are optimal, the solvers may simply drive the weights of the multiple nonlinear")}
+- **代价与边界**：网络能一直加深、训练误差也压得下去，测试误差却不再跟着降——瓶颈从「优化」转回「正则」。${cite(8, "We set n = 200 that leads to a 1202-layer network")}${cite(8, "this 103-layer network is able to achieve training error")} 块设计、bottleneck 与训练配方放在下面的方法拆解里。`,
   turns: [
     {
       q: "这篇论文的核心创新点是什么？为什么「加深反而变差」这件事值得专门写一篇？",
