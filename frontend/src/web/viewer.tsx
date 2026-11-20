@@ -172,7 +172,12 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
       if (jump) scrollToPage(jump.page, jump.smooth);
       else {
         const at = scrollMemory.get(docKey);
-        if (at && Math.abs(el.scrollTop - at) > 4) el.scrollTop = at;
+        if (at && Math.abs(el.scrollTop - at) > 4) {
+          // 回到原位置要看起来本来就在那里：这一步绕过容器的 smooth。
+          el.style.scrollBehavior = "auto";
+          el.scrollTop = at;
+          el.style.scrollBehavior = "";
+        }
       }
     });
     return () => cancelAnimationFrame(raf);
