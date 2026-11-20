@@ -11,7 +11,7 @@ import { gotoPage, paperKey as keyOf, refFromPaperKey, viewerState } from "../co
 import { PanelApp, QuickApp } from "./chat";
 import { LibraryRail } from "./library";
 import { SettingsPanel } from "./settings";
-import { Tour } from "./tour";
+import { Pet } from "./pet";
 import { getApi, registerViewerHooks, subscribe } from "./api";
 import { Viewer } from "./viewer";
 import { GraphView } from "./graph";
@@ -53,6 +53,12 @@ export function App() {
   const [graphLoading, setGraphLoading] = useState(false);
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
+
+  /** The pet's tour frames the library rail, so it may have to open it first. */
+  const expandRail = useCallback(() => {
+    setCollapsed(false);
+    localStorage.setItem("scholarpi.rail", "1");
+  }, []);
 
   // papers: demo catalogue from the static bundle + the user's library from IndexedDB
   const papers = useMemo(() => api.papers.list(), [tick, openKey]);
@@ -275,7 +281,7 @@ export function App() {
         <PanelApp />
       </section>
 
-      <Tour />
+      <Pet onShowGraph={() => void switchToGraph()} onExpandRail={expandRail} dockOpen={showQuick} />
 
       {showSettings && (
         <div class="modal" onMouseDown={(e) => e.target === e.currentTarget && setShowSettings(false)}>
