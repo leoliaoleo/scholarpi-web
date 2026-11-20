@@ -146,8 +146,17 @@ test("429 用「已保留你的问题」文案，并只信服务端给的等待�
   assert.equal(retryLabel(42), "约 42 秒后可以再试");
 });
 
-test("每日额度、超时、PDF、鉴权、断网各有各的说法", () => {
-  assert.equal(classifyError('{"error":"rate_limited","message":"每天 600 次已用完","retryAfter":3600}').kind, "quota");
+test("线上限流答复原样进分类：认分钟窗口，不误报成每日额度", () => {
+  // 2026-11-20 实测 scholarpi-web-tpzo6tda9by.qoder.zone 的 429 响应体。
+  const live = '{"error":"rate_limited","message":"公共演示额度已用完（每分钟 6 次）。请稍后再试，或在设置中填入自己的 DeepSeek Key 继续不限次使用。","retryAfter":54,"usage":{"usedMinute":6,"usedHour":6,"usedDay":6,"limitMinute":6,"limitHour":120,"limitDay":600,"remainingHour":114}}';
+  const err = classifyError(live, { status: 429, retryAfter: "54" });
+  assert.equal(err.kind, "rate");
+  assert.match(err.message, /已保留你的问题/);
+  assert.equal(err.retryAfter, 54);
+  assert.equal(retryLabel(err.retryAfter), "约 54 秒后可以再试");
+});
+
+test("每日额度、超时、PDF、鉴权、断网各有各的说法", () => {  assert.equal(classifyError('{"error":"rate_limited","message":"每天 600 次已用完","retryAfter":3600}').kind, "quota");
   assert.equal(classifyError("上游请求超时 upstream_timeout").kind, "timeout");
   assert.equal(classifyError("PDF 下载超时").kind, "pdf");
   assert.equal(classifyError('{"error":"missing_demo_key"}').kind, "auth");
