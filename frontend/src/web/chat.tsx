@@ -513,7 +513,11 @@ export function QuickApp() {
       {job.kind !== "translate" && (
         <Composer
           busy={busy}
-          onSend={(t) => void api.quick.submitAsk(t)}
+          onSend={async (t) => {
+            await api.quick.submitAsk(t);
+            // submitAsk 把失败只写进 job，这里返回 false 让草稿留在输入框。
+            return api.quick.job?.status === "error" ? false : undefined;
+          }}
           onStop={() => runtime?.abort()}
           autoFocus={job.kind === "ask" || job.kind === "image"}
           placeholder={(job.kind === "ask" || job.kind === "image") && !job.sessionId ? "输入问题，Enter 发送" : "继续追问…"}
