@@ -1,6 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { Markdown } from "./markdown";
+import { splitBullets } from "../shared/markdown";
+import { classifyError, retryLabel, type ErrorAction } from "../shared/errors";
+import { getApi } from "./api";
+import { EXAMPLE_ITEM_KEY } from "../core/presets";
 
 export const TOOL_LABELS: Record<string, string> = {
   paper_overview: "论文概览",
@@ -272,18 +276,80 @@ function hasToolCall(m: any): boolean {
   return (m?.content || []).some((c: any) => c.type === "toolCall");
 }
 
+/** Ticks down a server-given wait; never started without trustworthy seconds. */
+function useCountdown(seconds?: number): number | undefined {
+  const [left, setLeft] = useState<number | undefined>(seconds);
+  useEffect(() => {
+    if (!seconds) {
+      setLeft(undefined);
+      return;
+    }
+    setLeft(seconds);
+    const t0 = Date.now();
+    const iv = window.setInterval(() => {
+      const rest = seconds - Math.floor((Date.now() - t0) / 1000);
+      if (rest <= 0) {
+        window.clearInterval(iv);
+        setLeft(undefined);
+      } else setLeft(rest);
+    }, 1000);
+    return () => window.clearInterval(iv);
+  }, [seconds]);
+  return seconds ? left : undefined;
+}
+
+const ERROR_ACTIONS: Record<ErrorAction, string> = { retry: "重试", example: "查看示例", key: "配置个人 Key" };
+
+function runErrorAction(kind: ErrorAction, retry?: () => void): void {
+  if (kind === "retry") retry?.();
+  else if (kind === "key") getApi().openSettings();
+  else void getApi().openPaper(EXAMPLE_ITEM_KEY);
+}
+
+/**
+ * A failed reply, said plainly: what happened, what is still safe, and what to do
+ * next. Nothing here invents a queue position or a countdown we were not given.
+ */
 function ErrorBox({ message, onRetry }: { message: any; onRetry?: () => void }) {
-  if (message?.stopReason !== "error" && message?.stopReason !== "aborted") return null;
+  const [open, setOpen] = useState(false);
+  const isError = message?.stopReason === "error";
+  const isAborted = message?.stopReason === "aborted";
+  const err = classifyError(isError ? message?.errorMessage || message?.error || message : "");
+  const left = useCountdown(err.retryAfter);
+  const wait = left == null || left >= 600 ? "" : `（还剩 ${left < 60 ? `${left} 秒` : `${Math.ceil(left / 60)} 分钟`}）`;
+  if (!isError && !isAborted) return null;
+  if (isAborted) return <div class="aborted-box">已停止 · 你的问题与草稿都还在。</div>;
   return (
-    <div class={message.stopReason === "error" ? "error-box" : "aborted-box"}>
-      {message.stopReason === "error" ? `出错了：${message.errorMessage || "未知错误"}` : "已停止"}
-      {onRetry && (
-        <button class="link-btn" onClick={onRetry}>
-          重试
-        </button>
+    <div class="error-box">
+      <div>{err.message}</div>
+      {!!err.retryAfter && (
+        <div class="muted small">
+          {retryLabel(err.retryAfter)}
+          {wait}
+        </div>
       )}
+      <div class="err-actions">
+        {err.actions
+          .filter((a) => a !== "retry" || !!onRetry)
+          .map((a) => (
+            <button class="link-btn" key={a} onClick={() => runErrorAction(a, onRetry)}>
+              {ERROR_ACTIONS[a]}
+            </button>
+          ))}
+        {!!err.detail && (
+          <button class="link-btn" onClick={() => setOpen(!open)}>
+            {open ? "收起详情" : "查看原始信息"}
+          </button>
+        )}
+      </div>
+      {open && !!err.detail && <div class="err-detail muted small">{err.detail}</div>}
     </div>
   );
+}
+
+/** 划词 / 框图小卡的失败：同一套分类文案，同一条出路。 */
+export function QuickError({ error }: { error: string }) {
+  return <ErrorBox message={{ stopReason: "error", errorMessage: error }} />;
 }
 
 /**
@@ -507,14 +573,54 @@ export function MessageList({
   );
 }
 
-/** Scroll container that sticks to the bottom while content streams in. */
-export function AutoScroll({ children, dep }: { children: ComponentChildren; dep: any }) {
+/** Where each conversation was left, so a paper switch does not rewind the report. */
+const scrollMemory = new Map<string, number>();
+
+/**
+ * Scroll container that sticks to the bottom while content streams in.
+ *
+ * The first settled render is special: a conversation we have seen before goes back
+ * to its own offset, and a freshly seeded close-reading stops at its first core
+ * contribution (`anchor`) instead of the bottom of a five-thousand-word report.
+ */
+export function AutoScroll({
+  children,
+  dep,
+  ready = true,
+  memoryKey = "",
+  anchor = "",
+}: {
+  children: ComponentChildren;
+  dep: any;
+  /** False while the transcripts are still loading: do not settle on an empty list. */
+  ready?: boolean;
+  memoryKey?: string;
+  /** Selector for the block a cold report should open on, e.g. "h2". */
+  anchor?: string;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const settled = useRef(false);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [dep]);
+    if (!el || !ready) return;
+    if (!settled.current) {
+      // 转录还在从磁盘里读：等第一条消息到了再定位，否则锚点找不到、直接掉到底部。
+      if (!el.querySelector(".turn, .msg")) return;
+      settled.current = true;
+      const at = memoryKey ? scrollMemory.get(memoryKey) : undefined;
+      if (at != null) el.scrollTop = at;
+      else {
+        const target = anchor ? el.querySelector(anchor) : null;
+        el.scrollTop = target
+          ? Math.max(0, target.getBoundingClientRect().top - el.getBoundingClientRect().top - 12)
+          : el.scrollHeight;
+      }
+      stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+      return;
+    }
+    if (stick.current) el.scrollTop = el.scrollHeight;
+  }, [dep, ready]);
   return (
     <div
       class="scroll"
@@ -522,10 +628,35 @@ export function AutoScroll({ children, dep }: { children: ComponentChildren; dep
       onScroll={(e) => {
         const el = e.currentTarget as HTMLDivElement;
         stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        if (memoryKey) scrollMemory.set(memoryKey, el.scrollTop);
       }}
     >
       {children}
     </div>
+  );
+}
+
+/**
+ * The 📌 digest: three bullets are enough to decide whether to read on, so the rest
+ * of the contributions stay behind 展开 and every page chip stays clickable.
+ */
+export function ConclusionDigest({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const items = useMemo(() => splitBullets(text), [text]);
+  if (!items.length) return <Markdown text={text} />;
+  const shown = open ? items : items.slice(0, 3);
+  return (
+    <>
+      {shown.map((line, i) => (
+        <Markdown key={i} text={line} />
+      ))}
+      {items.length > 3 && (
+        <button class="link-btn" onClick={() => setOpen(!open)}>
+          {open ? "收起" : `展开其余 ${items.length - 3} 条贡献`}
+        </button>
+      )}
+      <div class="conclusion-hint muted small">💡 下方精读报告里的 p.2 页码都可点击：左侧 PDF 会跳页并圈出原文依据。</div>
+    </>
   );
 }
 
@@ -543,7 +674,7 @@ export function Composer({
   onRemoveAttachment,
   onCapture,
 }: {
-  onSend: (text: string) => void;
+  onSend: (text: string) => unknown;
   onStop?: () => void;
   busy: boolean;
   placeholder?: string;
@@ -568,10 +699,20 @@ export function Composer({
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 180) + "px";
   }, [text]);
-  const send = () => {
-    if (!text.trim() && !quote && !hasAttach) return;
-    onSend(text);
-    setText("");
+  /** One send at a time — and the draft only leaves the box once the run took it. */
+  const inflight = useRef(false);
+  const send = async () => {
+    if (inflight.current || (!text.trim() && !quote && !hasAttach)) return;
+    const body = text;
+    inflight.current = true;
+    try {
+      if ((await onSend(body)) === false) return;
+      setText((cur) => (cur === body ? "" : cur));
+    } catch (e) {
+      console.warn("[ScholarPi] 发送失败，草稿已保留", e);
+    } finally {
+      inflight.current = false;
+    }
   };
   return (
     <div class="composer">

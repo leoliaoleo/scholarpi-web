@@ -11,6 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { getApi } from "./api";
+import { petMiniDefault } from "../shared/layout";
 
 const api = getApi();
 
@@ -111,6 +112,12 @@ function homePos(): Box {
 function startPos(): Box {
   const m = /^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)$/.exec((localStorage.getItem(K_POS) || "").trim());
   return m ? clampPos(Number(m[1]), Number(m[2])) : homePos();
+}
+
+/** Narrow desktops get her as a side bubble from the start; an explicit choice always wins. */
+function defaultMin(): boolean {
+  const stored = localStorage.getItem(K_MIN);
+  return stored === null ? petMiniDefault(window.innerWidth) : stored === "1";
 }
 
 // ---------------------------------------------------------------------------
@@ -388,7 +395,7 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
   }, [onShowGraph, onExpandRail]);
   const steps = useMemo(() => makeSteps(host), []);
 
-  const [min, setMin] = useState(() => localStorage.getItem(K_MIN) === "1");
+  const [min, setMin] = useState(defaultMin);
   const [pos, setPos] = useState<Box>(startPos);
   const [view, setView] = useState<"menu" | "welcome" | "">("");
   const [say, setSay] = useState("");
@@ -398,8 +405,12 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
   const [boing, setBoing] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
+  /** 窄屏首访：不自动展开大面板，只在迷你气泡上亮一颗待点的小圆点。 */
+  const [nudge, setNudge] = useState(false);
 
   const posRef = useRef(pos);
+  const minRef = useRef(min);
+  minRef.current = min;
   const dragRef = useRef({ on: false, moved: false, dx: 0, dy: 0 });
   const cardRef = useRef<HTMLDivElement>(null);
   const dragged = useRef(!!localStorage.getItem(K_POS));
@@ -414,11 +425,14 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
     window.setTimeout(() => setBoing(false), 560);
   }, []);
 
-  // 首次访问：小鲸鱼自己探出头来打个招呼
+  // 首次访问：宽屏自己探出头来打个招呼；窄屏只点亮迷你气泡，等用户自己点开
   useEffect(() => {
     if (localStorage.getItem(K_SEEN)) return;
     const t = window.setTimeout(() => {
-      setMin(false);
+      if (minRef.current) {
+        setNudge(true);
+        return;
+      }
       setSay("嗨！我是小鲸鱼 Pi，你的科研助手。要不要花 1 分钟，我把这个工作台带你逛一圈？");
       setView("welcome");
     }, 900);
@@ -643,19 +657,24 @@ export function Pet({ onShowGraph, onExpandRail, dockOpen }: { onShowGraph: () =
   } as Style;
 
   return (
-    <div class={min ? "pet min" : "pet"} style={anchor}>
+    <div class={`pet${min ? " min" : ""}${min && nudge ? " nudge" : ""}`} style={anchor}>
       {min ? (
         <button
-          class="pet-min"
+          class={nudge ? "pet-min nudge" : "pet-min"}
           type="button"
-          title="叫出小鲸鱼 Pi 科研小助手"
+          title={nudge ? "小鲸鱼 Pi 有个 1 分钟带逛，点开看看" : "叫出小鲸鱼 Pi 科研小助手"}
           onClick={() => {
             setMin(false);
             localStorage.setItem(K_MIN, "");
+            setNudge(false);
             bounce();
             if (!view && step < 0) {
-              setSay("我在呢！要逛一圈还是直接演示？");
-              setView("menu");
+              setSay(
+                nudge
+                  ? "嗨！我是小鲸鱼 Pi，你的科研助手。要不要花 1 分钟，我把这个工作台带你逛一圈？"
+                  : "我在呢！要逛一圈还是直接演示？",
+              );
+              setView(nudge ? "welcome" : "menu");
             }
           }}
         >

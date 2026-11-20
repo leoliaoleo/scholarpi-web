@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { clone, getApi, subscribe } from "./api";
-import { ActivityBar, AutoScroll, Composer, MessageList, Thumb, textOf } from "./components";
+import { ActivityBar, AutoScroll, Composer, ConclusionDigest, MessageList, QuickError, Thumb, textOf } from "./components";
 import { Markdown } from "./markdown";
+import { presetFor } from "../core/presets";
 import { SkillBox } from "./skills";
 
 const api = getApi();
@@ -164,7 +165,7 @@ export function PanelApp() {
   const [quote, setQuote] = useState<{ text: string; pageLabel: string } | null>(null);
   const [attachments, setAttachments] = useState<any[]>([]);
   const [renaming, setRenaming] = useState(false);
-  const [showConclusion, setShowConclusion] = useState(false);
+  const [showConclusion, setShowConclusion] = useState<boolean | null>(null);
   const [toast, setToast] = useState<{ text: string; key?: string; libraryID?: number; icon?: string } | null>(null);
   const [health, setHealth] = useState<any>(null);
   const { settings, models } = useSettings();
@@ -250,8 +251,12 @@ export function PanelApp() {
   const sendPrompt = (text: string) => {
     if (runtime) void runtime.send(text);
   };
-  const send = (text: string) => {
-    if (!runtime) return;
+  /** False = the run never took it, so the composer keeps the draft on screen. */
+  const send = (text: string): void | false => {
+    if (!runtime) {
+      notify("会话还在准备中，这条问题保留在输入框里，稍后再发。");
+      return false;
+    }
     let content = text.trim();
     if (attachments.length) {
       const pages = [...new Set(attachments.map((a) => a.pageLabel))].join("、");
@@ -283,6 +288,10 @@ export function PanelApp() {
 
   const active = sessions.find((s) => s.id === activeId) || snap?.meta;
   const conclusion = snap?.meta?.conclusion || active?.conclusion || "";
+  // 有结论就默认展开：首访者要在第一屏看到核心贡献，而不是一个 📌 图标。
+  const openConclusion = showConclusion ?? !!conclusion;
+  // 预置精读是一篇已经写完的报告：首屏停在第一条核心贡献的开头，而不是全文末尾。
+  const presetReport = !!activeId && presetFor(ctx.ref.itemKey)?.title === (snap?.meta?.title || active?.title);
 
   return (
     <div class="app" onClick={onLink as any}>
@@ -316,7 +325,7 @@ export function PanelApp() {
         <button class="icon-btn" title="重命名会话" onClick={() => setRenaming(true)}>
           ✎
         </button>
-        <button class="icon-btn" title={conclusion ? "会话结论" : "暂无结论"} data-active={String(showConclusion)} onClick={() => setShowConclusion(!showConclusion)}>
+        <button class="icon-btn" title={conclusion ? "会话结论" : "暂无结论"} data-active={String(openConclusion)} onClick={() => setShowConclusion(!openConclusion)}>
           📌
         </button>
         <button class="icon-btn" title="删除会话" onClick={deleteSession}>
@@ -326,22 +335,27 @@ export function PanelApp() {
           ⚙
         </button>
       </div>
-      {showConclusion && (
+      {openConclusion && (
         <div class="conclusion">
-          <div class="conclusion-title">📌 会话结论（自动生成，Agent 可在其他文章的会话中查阅）</div>
-          {conclusion ? <Markdown text={conclusion} /> : <div class="muted">对话后会自动生成结论。</div>}
+          <div class="conclusion-title">📌 核心贡献与结论（{snap?.meta?.paperTitle || active?.paperTitle || "本文"}）</div>
+          {conclusion ? <ConclusionDigest text={conclusion} /> : <div class="muted">对话后会自动生成结论。</div>}
         </div>
       )}
       {!settings.apiKey && health && !health.demoKey && (
         <div class="banner">
-          演示 Key 未配置：在服务端设置 Secret <code>DEEPSEEK_API_KEY</code>，或填入自己的 Key。
+          免 Key 体验需服务端配置 Secret <code>DEEPSEEK_API_KEY</code>；也可填入自己的 Key。
           <button class="link-btn" onClick={() => api.openSettings()}>
             打开设置
           </button>
         </div>
       )}
-      {!settings.apiKey && health?.demoKey && <div class="banner info">正在使用服务端演示 Key（{health.limitNote || "有调用次数限制"}）；填入自己的 Key 可解除限制。</div>}
-      <AutoScroll dep={snap ? `${snap.version}:${textOf(snap.streaming).length}:${JSON.stringify(snap.streaming?.content?.length)}` : 0}>
+      {!settings.apiKey && health?.demoKey && <div class="banner info">演示模式可用 · 共享额度有速率限制。<button class="link-btn" onClick={() => api.openSettings()}>配置个人 Key</button></div>}
+      <AutoScroll
+        dep={snap ? `${snap.version}:${textOf(snap.streaming).length}:${JSON.stringify(snap.streaming?.content?.length)}` : 0}
+        ready={!!snap}
+        memoryKey={activeId || ""}
+        anchor={presetReport ? "h2" : ""}
+      >
         {snap ? (
           <MessageList
             messages={snap.messages}
@@ -456,11 +470,11 @@ export function QuickApp() {
           <div class="messages">
             <div class="msg assistant">
               {job.output ? <Markdown text={job.output} /> : job.status === "running" && <div class="thinking-live"><span class="spinner" /> 翻译中…</div>}
-              {job.status === "error" && <div class="error-box">翻译失败：{job.error}</div>}
+              {job.status === "error" && <QuickError error={String(job.error || "")} />}
             </div>
           </div>
         ) : job.status === "error" ? (
-          <div class="error-box">{job.error}</div>
+          <QuickError error={String(job.error || "")} />
         ) : snap ? (
           <MessageList
             messages={slice.filter((m: any, i: number) => !(i === 0 && m.role === "user"))}

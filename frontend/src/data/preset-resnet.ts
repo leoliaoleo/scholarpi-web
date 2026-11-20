@@ -2,7 +2,7 @@
  * Preset close-reading session for "Deep Residual Learning" (arXiv 1512.03385).
  * Chips quote the bundled page text verbatim so jump + highlight both work.
  */
-import { cite } from "./cite";
+import { cite } from "./cite.ts";
 
 const md = String.raw;
 

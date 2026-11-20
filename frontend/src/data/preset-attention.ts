@@ -5,7 +5,7 @@
  * both jumps the reader and outlines the source sentence. LaTeX is rendered by
  * KaTeX (`$…$` inline, `$$…$$` block).
  */
-import { cite } from "./cite";
+import { cite } from "./cite.ts";
 
 const md = String.raw;
 

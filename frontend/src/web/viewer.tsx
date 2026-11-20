@@ -11,6 +11,9 @@ import { getSettings } from "../core/config";
 import { globalEvents } from "../core/events";
 import { getAnnotation, listAnnotations, saveSelectionAsHighlight, type Annotation } from "../core/annotate";
 import { ensurePdf, getItem, type Paper } from "../core/paper";
+import { safeUrl } from "../core/library-util";
+import { EXAMPLE_ITEM_KEY } from "../core/presets";
+import { classifyError } from "../shared/errors";
 import { getDoc, getPage, getPageData } from "../core/reader";
 import { getRangeRects, type PdfChar } from "../core/text";
 import { renderActiveRegion } from "../core/vision";
@@ -44,9 +47,14 @@ export interface ViewerProps {
   /** `${libraryID}/${itemKey}` of the paper to show, null = drop zone. */
   paperKey: string | null;
   onOpenFile?: (file: File) => void;
+  /** False while the graph covers this pane: keep the scroll offset for the way back. */
+  active?: boolean;
 }
 
-export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
+/** Reading position per paper, kept across a 阅读 → 图谱 → 阅读 round trip. */
+const scrollMemory = new Map<string, number>();
+
+export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
   const scroller = useRef<HTMLDivElement>(null);
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [error, setError] = useState("");
@@ -60,6 +68,8 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
   const [attempt, setAttempt] = useState(0);
   const [openAnn, setOpenAnn] = useState<{ ann: Annotation; left: number; top: number } | null>(null);
   const regionResolve = useRef<((img: any) => void) | null>(null);
+  /** A `[p. x]` click that arrived before the PDF was on screen, applied the moment it is. */
+  const pendingJump = useRef<{ page: number; smooth: boolean } | null>(null);
 
   const item = useMemo(() => (paperKey ? getItem(refFromPaperKey(paperKey)) : null), [paperKey]);
   const docKey = paperKey || "";
@@ -72,6 +82,7 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
     setSel(null);
     setPulse(null);
     setOpenAnn(null);
+    pendingJump.current = null;
     for (const k of [...pageInfos.keys()]) if (k.startsWith(`${docKey}:`)) pageInfos.delete(k);
     if (!docKey || !item) {
       setViewerState({ paperKey: docKey || null, currentPage: 1, pageCount: 0, loading: false });
@@ -141,12 +152,31 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
   // ---------------------------------------------------------------- reader commands
   useEffect(() => {
     const onCmd = (c: ViewerCommand) => {
-      if (c.type === "goto") scrollToPage(c.page, c.smooth !== false);
-      else if (c.type === "highlight") setPulse({ pageIndex: c.pageIndex, rects: c.rects, keep: !!c.keep });
+      if (c.type === "goto") {
+        if (doc && viewerState.paperKey === docKey) scrollToPage(c.page, c.smooth !== false);
+        else pendingJump.current = { page: c.page, smooth: c.smooth !== false };
+      } else if (c.type === "highlight") setPulse({ pageIndex: c.pageIndex, rects: c.rects, keep: !!c.keep });
       else if (c.type === "clear-highlight") setPulse(null);
     };
     return subscribe(viewerCommands, onCmd);
-  }, [doc]);
+  }, [doc, docKey]);
+
+  // The pages exist only after the first render, so jump/restore one frame later.
+  useEffect(() => {
+    if (!doc || !active) return;
+    const jump = pendingJump.current;
+    pendingJump.current = null;
+    const raf = requestAnimationFrame(() => {
+      const el = scroller.current;
+      if (!el) return;
+      if (jump) scrollToPage(jump.page, jump.smooth);
+      else {
+        const at = scrollMemory.get(docKey);
+        if (at && Math.abs(el.scrollTop - at) > 4) el.scrollTop = at;
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [doc, active, docKey]);
 
   useEffect(() => {
     if (!pulse || pulse.keep) return;
@@ -204,6 +234,7 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
   const onScroll = () => {
     const el = scroller.current;
     if (!el || !doc) return;
+    scrollMemory.set(docKey, el.scrollTop);
     const page = visiblePageIndex(el);
     if (page >= 0 && page + 1 !== viewerState.currentPage) setViewerState({ currentPage: page + 1 });
   };
@@ -318,13 +349,14 @@ export function Viewer({ paperKey, onOpenFile }: ViewerProps) {
         {!doc && (
           <div class="viewer-empty">
             {error ? (
-              <div class="error-box">
-                <div>PDF 加载失败：{error}</div>
-                <button class="primary" onClick={() => { setError(""); setAttempt((a) => a + 1); }}>
-                  点击重试
-                </button>
-                <p class="muted small">网络不稳时会自动重试；也可以稍后再点开左侧论文。</p>
-              </div>
+              <PdfError
+                error={error}
+                item={item}
+                onRetry={() => {
+                  setError("");
+                  setAttempt((a) => a + 1);
+                }}
+              />
             ) : busy ? (
               <p>
                 <span class="spinner" /> {loadLabel(busy, dl)}
@@ -752,4 +784,35 @@ function visiblePageIndex(el: HTMLElement): number {
     else break;
   }
   return Number(best.dataset.page || 0);
+}
+
+/**
+ * A PDF that would not open, said by kind: the retry is real, the original link is
+ * never more than one click away, and nothing on the page has been thrown away.
+ */
+function PdfError({ error, item, onRetry }: { error: string; item: Paper | null; onRetry: () => void }) {
+  const err = classifyError(error);
+  const href = safeUrl(item?.pdfUrl) || safeUrl(item?.url);
+  return (
+    <div class="error-box">
+      <div>{err.message}</div>
+      <div class="err-actions">
+        <button class="primary" onClick={onRetry}>
+          点击重试
+        </button>
+        {err.actions.includes("example") && (
+          <button class="chip" onClick={() => void getApi().openPaper(EXAMPLE_ITEM_KEY)}>
+            查看示例
+          </button>
+        )}
+        {!!href && (
+          <a class="chip" href={href} target="_blank" rel="noopener noreferrer">
+            打开原文链接
+          </a>
+        )}
+      </div>
+      <p class="muted small">也可以把 PDF 直接拖进来，或在左侧重新点开这篇论文；批注与已有的精读报告都还在。</p>
+      {!!err.detail && <p class="muted small">技术信息：{err.detail.slice(0, 160)}</p>}
+    </div>
+  );
 }

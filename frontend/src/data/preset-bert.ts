@@ -2,7 +2,7 @@
  * Preset close-reading session for "BERT" (arXiv 1810.04805, v2).
  * Chips quote the bundled page text verbatim so jump + highlight both work.
  */
-import { cite } from "./cite";
+import { cite } from "./cite.ts";
 
 const md = String.raw;
 

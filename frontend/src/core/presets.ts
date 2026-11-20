@@ -29,6 +29,9 @@ export interface Preset {
 
 const PRESETS: Preset[] = [attentionPreset, resnetPreset, bertPreset];
 
+/** The one the welcome screen and the 限流 recovery both point at: zero model calls. */
+export const EXAMPLE_ITEM_KEY = attentionPreset.itemKey;
+
 export function presetFor(itemKey: string): Preset | null {
   return PRESETS.find((p) => p.itemKey === itemKey) || null;
 }

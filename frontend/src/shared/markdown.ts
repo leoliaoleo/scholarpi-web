@@ -138,6 +138,33 @@ export function createMarkdown(render: MathRenderer): MD {
   return md;
 }
 
+/** Top-level markdown bullets, each kept whole because a citation chip may live inside one. */
+export function splitBullets(md: string): string[] {
+  const items: string[] = [];
+  const pre: string[] = [];
+  const post: string[] = [];
+  let cur: string[] | null = null;
+  for (const line of (md || "").split("\n")) {
+    if (/^\s*([-*+]|\d+[.)])\s/.test(line)) {
+      if (cur) items.push(cur.join("\n"));
+      cur = [line];
+    } else if (cur && /^\s+\S/.test(line)) cur.push(line);
+    else {
+      if (cur) {
+        items.push(cur.join("\n"));
+        cur = null;
+      }
+      (items.length ? post : pre).push(line);
+    }
+  }
+  if (cur) items.push(cur.join("\n"));
+  const head = pre.join("\n").trim();
+  const tail = post.join("\n").trim();
+  const out = head ? [head, ...items] : items.slice();
+  if (tail) out.push(tail);
+  return out;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }

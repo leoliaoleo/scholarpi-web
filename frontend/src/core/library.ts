@@ -325,6 +325,10 @@ export async function generateCard(itemKey: string, opts: { signal?: AbortSignal
   );
   const json = parseJsonObject(out);
   const old = await getCard(itemKey);
+  // 模型这次什么都没给（JSON 坏了/额度被限）：上一张卡片原样留着，绝不用空字段覆盖它。
+  const got = ["method", "datasets", "metrics", "summary", "keywords", "tags"].some((k) => str((json as Record<string, unknown>)[k]));
+  if (!got && old) return old;
+  const tags = splitTags(json.tags);
   const card: PaperCard = {
     ...(old || emptyCard(itemKey)),
     itemKey,
@@ -333,9 +337,9 @@ export async function generateCard(itemKey: string, opts: { signal?: AbortSignal
     metrics: str(json.metrics) || old?.metrics || "",
     summary: str(json.summary) || old?.summary || "",
     keywords: str(json.keywords) || old?.keywords || "",
-    tags: joinTags(splitTags(str(json.tags))),
-    basis,
-    updatedAt: Date.now(),
+    tags: tags.length ? joinTags(tags) : old?.tags || "",
+    basis: got ? basis : old?.basis || basis,
+    updatedAt: got ? Date.now() : old?.updatedAt || Date.now(),
   };
   await saveCard(card, true);
   return card;
