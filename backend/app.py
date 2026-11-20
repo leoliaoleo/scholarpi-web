@@ -282,6 +282,18 @@ def _assert_public_host(host: str, port: int):
     return None
 
 
+def _mirror_arxiv_pdf(url: str) -> str:
+    """arxiv.org throttles datacenter egress; export.arxiv.org serves the same files fast."""
+    try:
+        u = urlparse(url)
+    except ValueError:
+        return url
+    if u.hostname in ("arxiv.org", "www.arxiv.org") and re.match(r"^/pdf/", u.path or "", re.I):
+        u = u._replace(netloc="export.arxiv.org")
+        return u.geturl()
+    return url
+
+
 def _safe_target(raw: str):
     if not raw:
         return None, "缺少 url 参数"
@@ -338,11 +350,13 @@ def relay():
     if request.method == "GET":
         raw = request.args.get("url", "")
         want_bytes = request.args.get("format") == "bytes"
+        rng = request.args.get("range", "")
         method, req_body, req_ctype = "GET", None, ""
     else:
         payload = request.get_json(silent=True) or {}
         raw = payload.get("url", "")
         want_bytes = False
+        rng = ""
         method = str(payload.get("method") or "POST").upper()
         req_body = payload.get("body")
         req_ctype = str(payload.get("contentType") or "")
@@ -367,6 +381,8 @@ def relay():
     }
     if req_ctype:
         headers["Content-Type"] = req_ctype
+    if want_bytes and re.match(r"^\d+-\d+$", rng or ""):
+        headers["Range"] = f"bytes={rng}"
     allowed = RELAY_KEY_HOSTS.get(host) or set()
     for name, value in (payload.get("headers") or {}).items():
         if isinstance(value, str) and len(value) < 512 and name in allowed:

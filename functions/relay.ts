@@ -8,7 +8,7 @@
  * link-local / metadata targets blocked, every redirect hop revalidated, response
  * size capped.
  */
-import { RELAY_MAX_BYTES, RELAY_TIMEOUT_MS, UA } from "./config.ts";
+import { RELAY_MAX_BYTES, RELAY_TIMEOUT_MS, SEARCH_TIMEOUT_MS, UA } from "./config.ts";
 import { apiError, json, readCapped } from "./http.ts";
 
 declare const Deno: { resolveDns?: (host: string, options?: { recordType?: string }) => Promise<string[]> };
@@ -18,6 +18,8 @@ const BINARY_TYPES = /^application\/(pdf|octet-stream)/i;
 const BLOCKED_HOSTS = new Set(["localhost", "metadata.google.internal", "metadata", "instance-data"]);
 /** Search engines that only answer POSTs. */
 const POST_HOSTS = new Set(["html.duckduckgo.com", "duckduckgo.com", "api.tavily.com"]);
+/** `?range=START-END`, so a big file can arrive in requests the gateway allows. */
+const RANGE_RE = /^(\d+)-(\d+)$/;
 /** Visitor-supplied search keys: this header may reach only this host. */
 const KEY_HOSTS: Record<string, Set<string>> = {
   "api.search.brave.com": new Set(["X-Subscription-Token"]),
@@ -84,6 +86,21 @@ export async function safeTarget(raw: string): Promise<{ url: URL | null; error:
   return { url: u, error: "" };
 }
 
+/**
+ * arXiv rate-limits datacenter egress on www/arxiv.org (a PDF crawls at tens of
+ * KB/s and the gateway cuts the stream), while export.arxiv.org — the same
+ * files, the host arXiv designates for programmatic access — serves them fast.
+ */
+function mirrorArxivPdf(u: URL): URL {
+  const host = u.hostname.toLowerCase();
+  if ((host === "arxiv.org" || host === "www.arxiv.org") && /^\/pdf\//i.test(u.pathname)) {
+    const next = new URL(u.toString());
+    next.hostname = "export.arxiv.org";
+    return next;
+  }
+  return u;
+}
+
 function decode(bytes: Uint8Array, charset: string): string {
   const label = (charset || "utf-8").toLowerCase();
   try {
@@ -108,6 +125,7 @@ async function handleRelayInner(req: Request): Promise<Response> {
   const isGet = req.method === "GET" || req.method === "HEAD";
   let raw = "";
   let wantBytes = false;
+  let range = "";
   let method = "GET";
   let reqBody: string | null = null;
   let reqCtype = "";
@@ -117,6 +135,7 @@ async function handleRelayInner(req: Request): Promise<Response> {
     const q = new URL(req.url).searchParams;
     raw = q.get("url") || "";
     wantBytes = q.get("format") === "bytes";
+    range = q.get("range") || "";
   } else if (req.method === "POST") {
     let payload: any = {};
     try {
@@ -147,17 +166,22 @@ async function handleRelayInner(req: Request): Promise<Response> {
     "Accept-Language": req.headers.get("Accept-Language") || "en-US,en;q=0.8",
   });
   if (reqCtype) headers.set("Content-Type", reqCtype);
+  if (wantBytes) {
+    const m = RANGE_RE.exec(range.trim());
+    if (m) headers.set("Range", `bytes=${m[1]}-${m[2]}`);
+  }
   for (const [name, value] of Object.entries(forwarded)) {
     if (typeof value !== "string" || value.length > 512) continue;
     if (!allowed.has(name)) return apiError("blocked", `不允许向 ${host} 转发带密钥的请求`, 403);
     headers.set(name, value);
   }
 
-  let url = target.url;
+  let url = mirrorArxivPdf(target.url);
   let res: Response | null = null;
+  const budget = isSearchHost(host) ? SEARCH_TIMEOUT_MS : RELAY_TIMEOUT_MS;
   const ctrl = new AbortController();
   req.signal?.addEventListener("abort", () => ctrl.abort(), { once: true });
-  const timer = setTimeout(() => ctrl.abort(), RELAY_TIMEOUT_MS);
+  const timer = setTimeout(() => ctrl.abort(), budget);
   try {
     for (let hop = 0; hop < 5; hop++) {
       res = await fetch(url.toString(), {
@@ -172,7 +196,7 @@ async function handleRelayInner(req: Request): Promise<Response> {
         if (!location) break;
         const next = await safeTarget(new URL(location, url).toString());
         if (!next.url) return apiError("blocked", `重定向被拒绝：${next.error}`, 400);
-        url = next.url;
+        url = mirrorArxivPdf(next.url);
         continue;
       }
       break;
@@ -180,7 +204,7 @@ async function handleRelayInner(req: Request): Promise<Response> {
   } catch (e: any) {
     const name = e instanceof Error ? e.name : "Error";
     const message = e instanceof Error ? e.message : String(e);
-    if (name === "AbortError") return apiError("timeout", `抓取超时（${Math.round(RELAY_TIMEOUT_MS / 1000)}s）`, 504);
+    if (name === "AbortError") return apiError("timeout", `抓取超时（${Math.round(budget / 1000)}s）`, 504);
     // Provide detailed error message for debugging
     return apiError("fetch_failed", `抓取失败：${name} - ${message.slice(0, 100)}`, 502);
   } finally {
@@ -202,7 +226,10 @@ async function handleRelayInner(req: Request): Promise<Response> {
     // Copy content-length if available
     const contentLength = res.headers.get("content-length");
     if (contentLength) responseHeaders.set("content-length", contentLength);
-    
+    // A ranged answer must stay a ranged answer: the client stitches the pieces together.
+    const contentRange = res.headers.get("content-range");
+    if (contentRange) responseHeaders.set("content-range", contentRange);
+
     return new Response(res.body, {
       status: res.status,
       headers: responseHeaders,
@@ -225,6 +252,12 @@ async function handleRelayInner(req: Request): Promise<Response> {
     text: decode(bytes, charset),
     truncated: overflow,
   });
+}
+
+/** arXiv mirrors are handled by mirrorArxivPdf; these are the hosts that throttle or stall. */
+function isSearchHost(host: string): boolean {
+  const h = host.toLowerCase();
+  return h.startsWith("scholar.google") || POST_HOSTS.has(h) || h === "api.semanticscholar.org";
 }
 
 /** Named arXiv entry point: export.arxiv.org sends no CORS headers at all. */

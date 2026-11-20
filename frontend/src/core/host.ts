@@ -106,10 +106,70 @@ async function relayToResponse(res: Response, url: string): Promise<Response> {
   return out;
 }
 
-/** Binary download (PDF) through the relay, as an ArrayBuffer. */
-export function fetchBytes(url: string, onProgress?: ProgressFn): Promise<ArrayBuffer> {
-  const target = canFetchDirect(url) ? url : `${apiUrl("relay")}?${relayParams(url, "bytes")}`;
-  return download(target, onProgress);
+/**
+ * Binary download (PDF), as an ArrayBuffer.
+ *
+ * A host that answers CORS (arxiv.org does) is fetched straight by the browser:
+ * many times faster than a function round-trip and free of the gateway's stream
+ * cap. Everything else — the hosts that send no CORS headers at all — comes
+ * through the relay in ranges.
+ */
+export async function fetchBytes(url: string, onProgress?: ProgressFn): Promise<ArrayBuffer> {
+  if (canFetchDirect(url)) return download(url, onProgress);
+  try {
+    return await download(url, onProgress);
+  } catch {
+    return relayBytes(url, onProgress);
+  }
+}
+
+/**
+ * The gateway ends a single response after roughly a minute, and third-party
+ * hosts are often far slower than that, so a whole PDF cannot travel in one
+ * relay request. Ranges keep every request short and let a failed piece retry
+ * without throwing away the bytes already downloaded. Measured throughput
+ * swings from 100 KB/s to under 20 KB/s, so a piece that got cut is retried at
+ * half the window instead of gambling on the same size again.
+ */
+const RELAY_CHUNK_BYTES = 1_000_000;
+const RELAY_MIN_CHUNK_BYTES = 125_000;
+
+async function relayBytes(url: string, onProgress?: ProgressFn): Promise<ArrayBuffer> {
+  const parts: Uint8Array[] = [];
+  let received = 0;
+  let total = 0;
+  let start = 0;
+  let chunk = RELAY_CHUNK_BYTES;
+  for (;;) {
+    const target = `${apiUrl("relay")}?${relayParams(url, "bytes")}&range=${start}-${start + chunk - 1}`;
+    let ranged = false;
+    let buf: ArrayBuffer;
+    try {
+      buf = await download(target, (got) => onProgress?.(received + got, total), {}, (res) => {
+        ranged = res.status === 206;
+        const m = /\/(\d+)\s*$/.exec(res.headers.get("content-range") || "");
+        if (m) total = Number(m[1]);
+      });
+    } catch (e) {
+      if (chunk <= RELAY_MIN_CHUNK_BYTES) throw e;
+      chunk = Math.max(RELAY_MIN_CHUNK_BYTES, Math.floor(chunk / 2));
+      continue;
+    }
+    const view = new Uint8Array(buf);
+    if (!view.byteLength) break;
+    parts.push(view);
+    received += view.byteLength;
+    onProgress?.(received, total);
+    if (!ranged || view.byteLength < chunk || (total > 0 && received >= total)) break;
+    start += view.byteLength;
+  }
+  const out = new Uint8Array(received);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.byteLength;
+  }
+  return out.buffer as ArrayBuffer;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,8 +187,15 @@ export type ProgressFn = (received: number, total: number) => void;
  * `STALL_MS` arms before the request and re-arms on every chunk, so a slow link that is
  * still delivering keeps going while a dead one fails in ~10s. 4xx is a real answer
  * (missing file, blocked host) and is reported at once instead of retried.
+ * `onHead` sees the response before its body is read, for callers that need the
+ * status or headers (a ranged download cannot tell 206 from 200 any other way).
  */
-export async function download(url: string, onProgress?: ProgressFn, init: RequestInit = {}): Promise<ArrayBuffer> {
+export async function download(
+  url: string,
+  onProgress?: ProgressFn,
+  init: RequestInit = {},
+  onHead?: (res: Response) => void,
+): Promise<ArrayBuffer> {
   let failure = new Error("下载失败");
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
     if (attempt) await sleep(400 * attempt);
@@ -147,6 +214,7 @@ export async function download(url: string, onProgress?: ProgressFn, init: Reque
         continue;
       }
       arm();
+      onHead?.(res);
       return await readWithProgress(res, onProgress, arm);
     } catch (e: any) {
       failure = e?.name === "AbortError" ? new Error(`下载超时：${STALL_MS / 1000} 秒内没有响应`) : new Error(String(e?.message || e));

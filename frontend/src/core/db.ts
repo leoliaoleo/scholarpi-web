@@ -11,34 +11,73 @@ export type StoreName = (typeof STORES)[number];
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
-export function openDB(): Promise<IDBDatabase> {
-  if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("sessions")) {
-        const s = db.createObjectStore("sessions", { keyPath: "id" });
-        s.createIndex("byPaper", ["libraryID", "itemKey"], { unique: false });
-      }
-      if (!db.objectStoreNames.contains("messages")) {
-        const m = db.createObjectStore("messages", { keyPath: ["sessionID", "seq"] });
-        m.createIndex("bySession", "sessionID", { unique: false });
-      }
-      if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv", { keyPath: "key" });
-      if (!db.objectStoreNames.contains("papers")) db.createObjectStore("papers", { keyPath: "itemKey" });
-      if (!db.objectStoreNames.contains("annotations")) {
-        const a = db.createObjectStore("annotations", { keyPath: "key" });
-        a.createIndex("byPaper", ["libraryID", "itemKey"], { unique: false });
-      }
-      if (!db.objectStoreNames.contains("blobs")) db.createObjectStore("blobs", { keyPath: "id" });
-      // v2: the personal knowledge base
-      if (!db.objectStoreNames.contains("collections")) db.createObjectStore("collections", { keyPath: "id" });
-      if (!db.objectStoreNames.contains("cards")) db.createObjectStore("cards", { keyPath: "itemKey" });
-    };
+function createMissingStores(db: IDBDatabase): void {
+  if (!db.objectStoreNames.contains("sessions")) {
+    const s = db.createObjectStore("sessions", { keyPath: "id" });
+    s.createIndex("byPaper", ["libraryID", "itemKey"], { unique: false });
+  }
+  if (!db.objectStoreNames.contains("messages")) {
+    const m = db.createObjectStore("messages", { keyPath: ["sessionID", "seq"] });
+    m.createIndex("bySession", "sessionID", { unique: false });
+  }
+  if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv", { keyPath: "key" });
+  if (!db.objectStoreNames.contains("papers")) db.createObjectStore("papers", { keyPath: "itemKey" });
+  if (!db.objectStoreNames.contains("annotations")) {
+    const a = db.createObjectStore("annotations", { keyPath: "key" });
+    a.createIndex("byPaper", ["libraryID", "itemKey"], { unique: false });
+  }
+  if (!db.objectStoreNames.contains("blobs")) db.createObjectStore("blobs", { keyPath: "id" });
+  if (!db.objectStoreNames.contains("collections")) db.createObjectStore("collections", { keyPath: "id" });
+  if (!db.objectStoreNames.contains("cards")) db.createObjectStore("cards", { keyPath: "itemKey" });
+}
+
+function missingStores(db: IDBDatabase): string[] {
+  return STORES.filter((name) => !db.objectStoreNames.contains(name));
+}
+
+function openAt(version: number): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, version);
+    req.onupgradeneeded = () => createMissingStores(req.result);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
     req.onblocked = () => reject(new Error("IndexedDB 被其他标签页占用，请关闭后重试"));
+  });
+}
+
+/** The version really on disk: asking for less makes IndexedDB refuse the open. */
+async function storedVersion(): Promise<number> {
+  if (typeof indexedDB.databases !== "function") return 0;
+  try {
+    const list = await indexedDB.databases();
+    return list.find((entry) => entry.name === DB_NAME)?.version || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * A database written by an older build can already sit at the current version
+ * yet lack a store added since, and IndexedDB then never fires
+ * `onupgradeneeded`. Bumping the stored version once makes the same creation
+ * pass run and heals those installs instead of losing every write.
+ */
+async function openAndHeal(): Promise<IDBDatabase> {
+  let db = await openAt(Math.max(DB_VERSION, await storedVersion()));
+  for (let hop = 0; hop < STORES.length && missingStores(db).length; hop++) {
+    const next = db.version + 1;
+    db.close();
+    db = await openAt(next);
+  }
+  const missing = missingStores(db);
+  if (missing.length) throw new Error(`IndexedDB 缺少数据表：${missing.join("、")}`);
+  return db;
+}
+
+export function openDB(): Promise<IDBDatabase> {
+  if (!dbPromise) dbPromise = openAndHeal().catch((e) => {
+    dbPromise = null;
+    throw e;
   });
   return dbPromise;
 }

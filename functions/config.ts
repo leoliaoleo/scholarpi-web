@@ -29,6 +29,11 @@ export const LIMIT_PER_DAY = num("DEMO_LIMIT_PER_DAY", 600);
 export const MAX_BODY_BYTES = num("DEMO_MAX_BODY_BYTES", 1_800_000);
 export const RELAY_MAX_BYTES = num("RELAY_MAX_BYTES", 8 * 1024 * 1024);
 export const RELAY_TIMEOUT_MS = num("RELAY_TIMEOUT_MS", 40_000);
+/**
+ * A search page answers in a few seconds or it is throttling us, so waiting the
+ * full relay budget only burns the visitor's minute quota on a dead request.
+ */
+export const SEARCH_TIMEOUT_MS = num("SEARCH_TIMEOUT_MS", 12_000);
 
 export function demoKey(): string {
   return (Deno.env.get("DEEPSEEK_API_KEY") || "").trim();
