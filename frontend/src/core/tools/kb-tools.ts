@@ -274,7 +274,7 @@ export function kbTools(ctx: ToolContext): Tool[] {
     parameters: Type.Object({
       ids: Type.String({ description: "e.g. '2001.08361, 10.1109/CVPR.2016.90'" }),
       collection: Type.Optional(Type.String()),
-      with_card: Type.Optional(Type.Boolean({ description: "Also generate the metadata card (one model call each)" })),
+      with_card: Type.Optional(Type.Boolean({ description: "Generate the AI metadata card too (queued in the background, one model call each)" })),
     }),
     async execute(_id, p) {
       const target = p.collection ? await findCollection(p.collection) : null;
