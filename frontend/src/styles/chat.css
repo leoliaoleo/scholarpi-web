@@ -17,6 +17,8 @@
   --code-bg: rgba(24, 24, 27, 0.05);
   --error: #9f3a2f;
   --error-bg: rgba(159, 58, 47, 0.07);
+  /* 批注标记落在白色纸面上，深色模式也沿用这套偏墨的靛蓝，不跟着底色翻转。 */
+  --ann-color: var(--site-ann-color, #4a5f8a);
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -149,7 +151,7 @@ button { font: inherit; color: inherit; }
 .tool-arg { flex: 1 1 auto; min-width: 0; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tool-status { flex: 0 0 auto; color: var(--muted); }
 .tool-error .tool-status { color: var(--error); }
-.tool-done .tool-status { color: #2e7d32; }
+.tool-done .tool-status { color: #2f7d43; }
 .tool-body { padding: 0 calc(8px * var(--site-space, 1)) calc(8px * var(--site-space, 1)); }
 .tool-label { font-size: calc(11px * var(--site-type, 1)); color: var(--muted); margin: calc(4px * var(--site-space, 1)) 0 calc(2px * var(--site-space, 1)); }
 .tool-body pre { margin: 0; max-height: 260px; overflow: auto; background: var(--bg); border: 1px solid var(--border); border-radius: calc(var(--site-radius, 8px) * 0.75); padding: calc(6px * var(--site-space, 1)); font-size: calc(11.5px * var(--site-type, 1)); white-space: pre-wrap; word-break: break-word; }
