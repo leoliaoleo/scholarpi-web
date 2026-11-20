@@ -2,7 +2,7 @@
  * arXiv (API + HTML full text), Google Scholar (with Semantic Scholar fallback) and the
  * identifier resolution the knowledge base imports papers through.
  */
-import { identifierKind } from "./library-util";
+import { arxivStableId, identifierKind, normalizeArxivId } from "./library-util";
 import { domToText, httpGet, parseHTML } from "./web";
 
 export interface ArxivEntry {
@@ -15,15 +15,6 @@ export interface ArxivEntry {
   summary: string;
   pdf: string;
   abs: string;
-}
-
-export function normalizeArxivId(input: string): string {
-  const s = input.trim();
-  const m =
-    s.match(/arxiv\.org\/(?:abs|pdf|html)\/([^?#\s]+?)(?:\.pdf)?(?:[?#].*)?$/i) ||
-    s.match(/^(?:arxiv:)?\s*(\d{4}\.\d{4,5}(?:v\d+)?)$/i) ||
-    s.match(/^(?:arxiv:)?\s*([a-z-]+(?:\.[A-Z]{2})?\/\d{7}(?:v\d+)?)$/i);
-  return m ? m[1] : s;
 }
 
 function text(el: Element | null | undefined): string {
@@ -74,6 +65,25 @@ export async function arxivGet(id: string, signal?: AbortSignal): Promise<ArxivE
   if (!res.ok) throw new Error(`arXiv API HTTP ${res.status}`);
   const entries = parseAtom(await res.text());
   return entries.find((e) => e.title && e.title !== "Error") || null;
+}
+
+/**
+ * `id_list=id1,id2,id3` answers a whole batch in one Atom document — the difference between a
+ * single round trip and N serial ones when the user pastes five identifiers. Unknown ids come
+ * back as an error <entry>, so one bad id never sinks the rest of the batch.
+ */
+export async function arxivGetMany(ids: string[], signal?: AbortSignal): Promise<Map<string, ArxivEntry>> {
+  const unique = [...new Set(ids.map(arxivStableId).filter(Boolean))];
+  const out = new Map<string, ArxivEntry>();
+  for (let i = 0; i < unique.length; i += 50) {
+    const chunk = unique.slice(i, i + 50);
+    const res = await httpGet(`https://export.arxiv.org/api/query?id_list=${chunk.join(",")}&max_results=${chunk.length}`, { signal });
+    if (!res.ok) throw new Error(`arXiv API HTTP ${res.status}`);
+    for (const e of parseAtom(await res.text())) {
+      if (e.title && e.title !== "Error") out.set(arxivStableId(e.id), e);
+    }
+  }
+  return out;
 }
 
 export interface ArxivSection {
@@ -286,8 +296,8 @@ export interface ExternalRecord {
   hints: { tldr: string; keywords: string[]; citations: number; references: number };
 }
 
-function fromArxiv(e: ArxivEntry, id: string): ExternalRecord {
-  const stable = id.replace(/v\d+$/i, "");
+export function arxivRecord(e: ArxivEntry, id: string): ExternalRecord {
+  const stable = arxivStableId(id);
   return {
     itemKey: stable,
     title: e.title || `arXiv:${stable}`,
@@ -302,6 +312,18 @@ function fromArxiv(e: ArxivEntry, id: string): ExternalRecord {
     kind: "arxiv",
     hints: { tldr: "", keywords: e.categories.slice(0, 5), citations: 0, references: 0 },
   };
+}
+
+/**
+ * Resolve a batch of arXiv identifiers with one Atom request. The Semantic Scholar hints
+ * (被引数 / tldr) are deliberately left out: they cost a second round trip per paper and the
+ * knowledge base fills them in afterwards.
+ */
+export async function arxivRecords(ids: string[], signal?: AbortSignal): Promise<Map<string, ExternalRecord>> {
+  const entries = await arxivGetMany(ids, signal);
+  const out = new Map<string, ExternalRecord>();
+  for (const [key, entry] of entries) out.set(key, arxivRecord(entry, key));
+  return out;
 }
 
 function enrich(rec: ExternalRecord, s2: any): void {
@@ -327,7 +349,7 @@ export async function resolveExternal(value: string, signal?: AbortSignal): Prom
     const id = normalizeArxivId(raw);
     const entry = await arxivGet(id, signal);
     if (!entry) throw new Error(`arXiv 上找不到 ${id}`);
-    const rec = fromArxiv(entry, id);
+    const rec = arxivRecord(entry, id);
     enrich(rec, await semanticPaper(`ARXIV:${rec.itemKey}`, signal));
     return rec;
   }

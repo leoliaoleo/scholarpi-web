@@ -7,6 +7,7 @@ import test from "node:test";
 
 import {
   BACKUP_KIND,
+  arxivStableId,
   bm25,
   buildKbDocs,
   identifierKind,
@@ -15,6 +16,7 @@ import {
   matchedFields,
   normalizeTag,
   parseIdentifiers,
+  planImports,
   safeUrl,
   snippetFor,
   splitTags,
@@ -149,6 +151,20 @@ test("pasted blocks split into unique identifiers", () => {
   assert.deepEqual(list, ["2001.08361", "1706.03762", "10.1109/CVPR.2016.90", "https://arxiv.org/abs/2005.14165"]);
   assert.equal(parseIdentifiers("").length, 0);
   assert.equal(parseIdentifiers(Array.from({ length: 400 }, (_, i) => `1706.0${(i + 1000).toString().slice(0, 4)}`).join(" ")).length, 200);
+});
+
+test("arXiv ids collapse to the stable form the library keys on", () => {
+  assert.equal(arxivStableId("1706.03762v5"), "1706.03762");
+  assert.equal(arxivStableId("https://arxiv.org/pdf/2005.14165.pdf"), "2005.14165");
+  assert.equal(arxivStableId("arXiv:2103.00020"), "2103.00020");
+  assert.equal(arxivStableId("cs.CL/0307001v2"), "cs.CL/0307001");
+});
+
+test("a pasted batch splits into one arXiv request plus a concurrent remainder", () => {
+  const plan = planImports(["1706.03762", "https://arxiv.org/abs/2005.14165v4", "10.1109/CVPR.2016.90", " ", "https://openreview.net/pdf?id=HK"]);
+  assert.deepEqual(plan.arxiv.map((j) => j.i), [0, 1]);
+  assert.deepEqual(plan.rest.map((j) => j.raw), ["10.1109/CVPR.2016.90", "https://openreview.net/pdf?id=HK"]);
+  assert.deepEqual(plan.blanks.map((j) => j.i), [3]);
 });
 
 test("safeUrl rejects javascript: and non-urls", () => {

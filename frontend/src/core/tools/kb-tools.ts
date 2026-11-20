@@ -5,6 +5,7 @@
  * 演进 里") and a click keep the library in the same state.
  */
 import { Type } from "@earendil-works/pi-ai";
+import { getSettings } from "../config";
 import {
   cardView,
   collectionAdd,
@@ -25,6 +26,7 @@ import {
   type Collection,
   type PaperCard,
 } from "../library";
+import { parseIdentifiers } from "../library-util";
 import { getItem, listPapers, paperTitle } from "../paper";
 import { clip, ok, tool, type Tool, type ToolContext } from "./common";
 import { resolvePaperItem } from "./paper-tools";
@@ -276,15 +278,18 @@ export function kbTools(ctx: ToolContext): Tool[] {
     }),
     async execute(_id, p) {
       const target = p.collection ? await findCollection(p.collection) : null;
-      const rows = await importBlock(p.ids, { collectionId: target?.id, signal: undefined });
-      const outs = rows.map((r) => `- ${r.input} → ${r.ok ? `${r.action === "existing" ? "已存在" : "已入库"} item_key=${r.itemKey} | ${clip(r.title, 80)}${r.pdf ? " | 有PDF" : " | 无PDF直链"}` : `失败：${r.note}`}`);
+      const wanted = parseIdentifiers(p.ids);
+      const rows = await importBlock(p.ids, { collectionId: target?.id, signal: undefined, withCard: p.with_card });
       ctx.notify({ type: "library-changed" });
+      const outs = rows.map((r) => `- ${r.input} → ${r.ok ? `${r.action === "existing" ? "已存在" : "已入库"} item_key=${r.itemKey} | ${clip(r.title, 80)}${r.pdf ? " | 有PDF" : " | 无PDF直链"}` : `失败：${r.note}`}`);
       const okCount = rows.filter((r) => r.ok).length;
-      const wanted = String(p.ids).split(/[,，\s]+/).filter(Boolean);
-      if (p.with_card) {
-        for (const r of rows) if (r.ok) await generateCard(r.itemKey).catch(() => undefined);
-      }
-      return ok(`导入 ${okCount}/${wanted.length} 篇${target ? ` → 专题「${target.name}」` : ""}\n\n${outs.join("\n")}`, { added: okCount });
+      const pending = p.with_card ?? getSettings().kbAutoCard;
+      return ok(
+        `导入 ${okCount}/${wanted.length} 篇（元数据已入库，PDF 与 AI 卡片在后台补）${target ? ` → 专题「${target.name}」` : ""}\n\n${outs.join("\n")}${
+          pending && okCount ? "\n\n卡片正在后台逐篇生成，稍后刷新即可看到方法/数据集/指标。" : ""
+        }`,
+        { added: okCount, cards: pending ? "background" : undefined },
+      );
     },
   });
 

@@ -327,6 +327,44 @@ export function identifierKind(value: string): "arxiv" | "doi" | "url" {
   return "url";
 }
 
+/** `arxiv.org/pdf/1706.03762.pdf`, `1706.03762v5`, `arXiv:1706.03762` → `1706.03762v5`. */
+export function normalizeArxivId(input: string): string {
+  const s = String(input || "").trim();
+  const m =
+    s.match(/arxiv\.org\/(?:abs|pdf|html)\/([^?#\s]+?)(?:\.pdf)?(?:[?#].*)?$/i) ||
+    s.match(/^(?:arxiv:)?\s*(\d{4}\.\d{4,5}(?:v\d+)?)$/i) ||
+    s.match(/^(?:arxiv:)?\s*([a-z-]+(?:\.[A-Z]{2})?\/\d{7}(?:v\d+)?)$/i);
+  return m ? m[1] : s;
+}
+
+/** The library keys on the version-less id, so v1/v2 of one paper stay one record. */
+export function arxivStableId(input: string): string {
+  return normalizeArxivId(input).replace(/v\d+$/i, "");
+}
+
+export interface ImportJob {
+  raw: string;
+  i: number;
+}
+
+/**
+ * Split a pasted batch into the three lanes the importer handles differently: arXiv ids ride
+ * one `id_list` request, everything else goes through the concurrency pool, and blanks answer
+ * immediately. `i` keeps each result at the position of the input that produced it.
+ */
+export function planImports(values: string[]): { arxiv: ImportJob[]; rest: ImportJob[]; blanks: ImportJob[] } {
+  const arxiv: ImportJob[] = [];
+  const rest: ImportJob[] = [];
+  const blanks: ImportJob[] = [];
+  values.forEach((value, i) => {
+    const raw = String(value || "").trim();
+    if (!raw) blanks.push({ raw: String(value ?? ""), i });
+    else if (identifierKind(raw) === "arxiv") arxiv.push({ raw, i });
+    else rest.push({ raw, i });
+  });
+  return { arxiv, rest, blanks };
+}
+
 // ---------------------------------------------------------------------------
 // knowledge-base search documents
 

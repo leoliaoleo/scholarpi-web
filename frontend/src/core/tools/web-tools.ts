@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
-import { arxivGet, arxivSearch, arxivSections, normalizeArxivId, scholarSearch } from "../academic";
+import { arxivGet, arxivSearch, arxivSections, scholarSearch } from "../academic";
+import { normalizeArxivId } from "../library-util";
 import { getSettings } from "../config";
 import { sliceWithHint } from "../text";
 import { fetchPage, webSearch } from "../web";

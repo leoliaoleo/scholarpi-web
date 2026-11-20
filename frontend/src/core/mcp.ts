@@ -10,10 +10,11 @@
  * 外部工具统一加 `<server>__` 前缀，避免与现有 `arxiv_search` 等内置工具重名。
  */
 import { Type } from "@earendil-works/pi-ai";
-import { arxivSearch, semanticGraph, normalizeArxivId } from "./academic";
+import { arxivSearch, semanticGraph } from "./academic";
 import { getSettings } from "./config";
 import { apiUrl, canFetchDirect } from "./host";
 import { importIdentifier } from "./library";
+import { normalizeArxivId } from "./library-util";
 import { globalEvents } from "./events";
 import { ok, tool, type Tool } from "./tools/common";
 

@@ -22,6 +22,27 @@ interface Filter {
 
 const EMPTY: Filter = { collection: "", tag: "", text: "" };
 
+/**
+ * 逐篇入库进度：core/library.ts 每写完一条就发一个事件，所以左边这条横幅不管是面板点的
+ * 还是 agent 的 kb_import 触发的都长得一样。最后一篇之后再亮 4 秒就收起来。
+ */
+function useImportProgress() {
+  const [job, setJob] = useState<{ done: number; total: number; title: string } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(
+    () =>
+      subscribe(api.events, (e: any) => {
+        if (e.type !== "kb-import-progress") return;
+        setJob({ done: Number(e.done) || 0, total: Number(e.total) || 0, title: String(e.title || "") });
+        clearTimeout(timer.current);
+        timer.current = setTimeout(() => setJob(null), 4000);
+      }),
+    [],
+  );
+  useEffect(() => () => clearTimeout(timer.current), []);
+  return job;
+}
+
 export function LibraryRail({
   papers,
   openKey,
@@ -43,6 +64,7 @@ export function LibraryRail({
   const [panel, setPanel] = useState<"" | "import" | "backup">("");
   const [error, setError] = useState("");
   const [tick, setTick] = useState(0);
+  const progress = useImportProgress();
 
   const reload = useCallback(async () => {
     const [cols, tagRows] = await Promise.all([api.kb.collections(), api.kb.tags()]);
@@ -103,7 +125,17 @@ export function LibraryRail({
           </button>
         )}
       </div>
-      {panel === "import" && <ImportPanel collections={collections} onChanged={onChanged} onDone={reload} onError={setError} />}
+      {progress && panel !== "import" && (
+        <div class="kb-progress" role="status">
+          <span class="kb-progress-track">
+            <i style={{ width: `${Math.round((progress.done / Math.max(1, progress.total)) * 100)}%` }} />
+          </span>
+          <span class="small">
+            已入库 {progress.done}/{progress.total} · {progress.title}
+          </span>
+        </div>
+      )}
+      {panel === "import" && <ImportPanel collections={collections} progress={progress} onChanged={onChanged} onDone={reload} onError={setError} />}
       {panel === "backup" && <BackupPanel onChanged={onChanged} onError={setError} />}
       {error && <div class="error-box">{error}</div>}
 
@@ -480,7 +512,19 @@ function useCardKeys(tick: number): Set<string> {
 // ---------------------------------------------------------------------------
 // import
 
-function ImportPanel({ collections, onChanged, onDone, onError }: { collections: Collection[]; onChanged: () => void; onDone: () => void; onError: (e: string) => void }) {
+function ImportPanel({
+  collections,
+  progress,
+  onChanged,
+  onDone,
+  onError,
+}: {
+  collections: Collection[];
+  progress: { done: number; total: number; title: string } | null;
+  onChanged: () => void;
+  onDone: () => void;
+  onError: (e: string) => void;
+}) {
   const [text, setText] = useState("");
   const [collection, setCollection] = useState("");
   const [withCard, setWithCard] = useState(true);
@@ -491,7 +535,7 @@ function ImportPanel({ collections, onChanged, onDone, onError }: { collections:
   const run = async () => {
     const ids = text.trim();
     if (!ids) return;
-    setBusy("正在抓取元数据并解析 PDF…");
+    setBusy("正在抓取元数据并入库…");
     onError("");
     setRows([]);
     try {
@@ -554,6 +598,11 @@ function ImportPanel({ collections, onChanged, onDone, onError }: { collections:
       {busy && (
         <div class="busy">
           <span class="spinner" /> {busy}
+          {progress && (
+            <span class="muted">
+              已入库 {progress.done}/{progress.total}
+            </span>
+          )}
         </div>
       )}
       {!!rows.length && (

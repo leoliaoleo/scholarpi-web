@@ -841,6 +841,24 @@ code {
 .kb-import-log .line b { flex: 0 0 auto; color: #2ea84a; }
 .kb-import-log .line.err { color: var(--error); }
 .kb-import-log .line.err b { color: var(--error); }
+/* 逐篇入库进度：面板开着时写在按钮下方，面板关着（agent 的 kb_import）就挂在这条横幅上 */
+.kb-progress {
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--site-space, 1));
+  background: var(--accent-bg);
+  border-radius: calc(var(--site-radius, 8px) * 0.75);
+  padding: calc(4px * var(--site-space, 1)) calc(6px * var(--site-space, 1));
+  font-size: calc(11px * var(--site-type, 1));
+}
+.kb-progress .small { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kb-progress-track { flex: 0 0 42px; height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.kb-progress-track i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width calc(0.3s * var(--site-motion, 1)) ease-out;
+}
 .paper-row { position: relative; display: flex; align-items: stretch; gap: calc(4px * var(--site-space, 1)); }
 .paper-row .paper { flex: 1 1 auto; min-width: 0; }
 .p-check { flex: 0 0 auto; align-self: flex-start; margin: calc(6px * var(--site-space, 1)) 0 0; width: 13px; height: 13px; cursor: pointer; }

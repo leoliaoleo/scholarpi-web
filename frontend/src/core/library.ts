@@ -5,7 +5,7 @@
  * 内置演示论文只读：给它们加的标签和卡片写在 `cards` 里，不改写 `/papers/manifest.json`
  * 带过来的条目，所以刷新页面、重新部署都不会影响 3 篇预置论文的阅读体验。
  */
-import { resolveExternal, type ExternalRecord } from "./academic";
+import { arxivRecords, resolveExternal, semanticPaper, type ExternalRecord } from "./academic";
 import { getSettings } from "./config";
 import * as db from "./db";
 import { globalEvents } from "./events";
@@ -14,6 +14,7 @@ import {
   BACKUP_KIND,
   BACKUP_VERSION,
   KB_WEIGHTS,
+  arxivStableId,
   bm25,
   buildKbDocs,
   dedupeStrings,
@@ -21,6 +22,7 @@ import {
   joinTags,
   matchedFields,
   parseIdentifiers,
+  planImports,
   safeUrl,
   sampleForCard,
   snippetFor,
@@ -28,17 +30,19 @@ import {
   stripPaperForBackup,
   toBibtexLibrary,
   type BibEntry,
+  type ImportJob,
 } from "./library-util";
 import {
+  ensurePdf,
   findSimilar,
   getItem,
   getPaperText,
+  hasPdfLoaded,
   listPapers,
   loadRegistry,
   paperMetadata,
   registerFile,
   registerMeta,
-  registerUrl,
   removePaper,
   type Paper,
 } from "./paper";
@@ -394,119 +398,37 @@ function hashSeed(s: string): string {
 }
 
 /**
- * One arXiv id / DOI / link → library record + metadata card, plus collection membership.
- * Validates PDF accessibility before committing to avoid orphaned entries.
+ * 导入只做两件事：拿元数据、写 IndexedDB。PDF 留到真正打开时再下（`paper.ts` 的懒加载），
+ * 预取、AI 卡片和被引数都在后台慢车道补，所以批量导入是秒级的。
  */
-export async function importIdentifier(value: string, opts: { collectionId?: string; signal?: AbortSignal; withCard?: boolean } = {}): Promise<ImportResult> {
-  const input = String(value || "").trim();
-  if (!input) return { input, ok: false, itemKey: "", title: "", action: "failed", pdf: false, note: "内容为空" };
-  try {
-    const rec = await resolveExternal(input, opts.signal);
-    
-    // Validate PDF accessibility before registering
-    const pdfUrl = rec.pdfUrl || (rec.kind === "url" ? rec.url : null);
-    if (pdfUrl) {
-      const validation = await validatePdfAccessibility(pdfUrl, opts.signal);
-      if (!validation.ok) {
-        return { 
-          input, 
-          ok: false, 
-          itemKey: "", 
-          title: rec.title || "", 
-          action: "failed", 
-          pdf: false, 
-          note: `PDF 验证失败：${validation.error}` 
-        };
-      }
-    }
-    
-    if (rec.kind === "url" && !rec.itemKey) {
-      const existing = findSimilar("", rec.pdfUrl || rec.url, rec.title);
-      const item = await registerUrl(rec.pdfUrl || rec.url, rec.title);
-      if (existing && existing.itemKey !== item.itemKey) {
-        return { input, ok: true, itemKey: existing.itemKey, title: existing.title, action: "existing", pdf: !!existing.pdfUrl, note: "库中已有同一篇" };
-      }
-      await touchCard(item, rec, opts.withCard);
-      if (opts.collectionId) await collectionAdd(opts.collectionId, item.itemKey);
-      changed();
-      return { input, ok: true, itemKey: item.itemKey, title: item.title, action: "added", pdf: !!item.pdfUrl, note: item.pdfUrl ? "" : "仅有链接，未拿到 PDF 直链" };
-    }
-    const dup = findSimilar(rec.DOI, rec.url || rec.pdfUrl, rec.title);
-    const paperPatch = recordToPaper(rec);
-    const item = await registerMeta(paperPatch);
-    await touchCard(item, rec, opts.withCard);
-    if (opts.collectionId) await collectionAdd(opts.collectionId, item.itemKey);
-    changed();
-    return {
-      input,
-      ok: true,
-      itemKey: item.itemKey,
-      title: item.title,
-      action: dup && dup.itemKey !== item.itemKey ? "existing" : "added",
-      pdf: !!item.pdfUrl,
-      note: dup && dup.itemKey !== item.itemKey ? `库中已有：${dup.title}` : rec.hints.citations ? `被引 ${rec.hints.citations}` : "",
-    };
-  } catch (e: any) {
-    return { input, ok: false, itemKey: "", title: "", action: "failed", pdf: false, note: String(e?.message || e).slice(0, 200) };
-  }
+export interface ImportOpts {
+  collectionId?: string;
+  signal?: AbortSignal;
+  withCard?: boolean;
+  onOne?: (r: ImportResult, i: number) => void;
 }
 
-/**
- * Validate that a PDF URL is accessible before importing.
- * Uses a HEAD request or partial GET to check without downloading the full file.
- */
-async function validatePdfAccessibility(url: string, signal?: AbortSignal): Promise<{ ok: boolean; error?: string }> {
-  try {
-    // Try HEAD first (faster, no body transfer)
-    const headCtrl = new AbortController();
-    const headTimer = setTimeout(() => headCtrl.abort(), 8000);
-    try {
-      const headRes = await fetch(url, { 
-        method: "HEAD", 
-        signal: signal || headCtrl.signal,
-        redirect: "follow"
-      });
-      clearTimeout(headTimer);
-      if (!headRes.ok) {
-        return { ok: false, error: `HTTP ${headRes.status} ${headRes.statusText}` };
-      }
-      const contentType = headRes.headers.get("content-type") || "";
-      if (contentType && !/pdf|octet-stream/i.test(contentType)) {
-        return { ok: false, error: `非 PDF 类型：${contentType}` };
-      }
-      return { ok: true };
-    } catch (e: any) {
-      clearTimeout(headTimer);
-      // HEAD failed, try partial GET with Range header
-      if (e.name !== "AbortError") {
-        const rangeCtrl = new AbortController();
-        const rangeTimer = setTimeout(() => rangeCtrl.abort(), 10000);
-        try {
-          const rangeRes = await fetch(url, {
-            method: "GET",
-            headers: { Range: "bytes=0-1023" },
-            signal: signal || rangeCtrl.signal,
-            redirect: "follow"
-          });
-          clearTimeout(rangeTimer);
-          if (!rangeRes.ok && rangeRes.status !== 206) {
-            return { ok: false, error: `HTTP ${rangeRes.status} ${rangeRes.statusText}` };
-          }
-          return { ok: true };
-        } catch (e2: any) {
-          clearTimeout(rangeTimer);
-          return { ok: false, error: `网络错误：${e2?.message || e2}` };
-        }
-      }
-      return { ok: false, error: "请求超时" };
-    }
-  } catch (e: any) {
-    return { ok: false, error: e?.message || String(e) };
-  }
+/** 一条链路的耐心上限：慢链接只牺牲自己，不拖垮整批。 */
+const RESOLVE_TIMEOUT_MS = 8000;
+/** DOI / 普通链接的并行抓取数；arXiv 走一次 id_list 批量请求，不占这份并发。 */
+const RESOLVE_CONCURRENCY = 4;
+
+function failed(input: string, note: string): ImportResult {
+  return { input, ok: false, itemKey: "", title: "", action: "failed", pdf: false, note: String(note).slice(0, 200) };
 }
 
-/** Card seeded from the fetched record; optionally ask the model for the analysis fields. */
-async function touchCard(item: Paper, rec: ExternalRecord, withCard?: boolean): Promise<void> {
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const guard = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}：${Math.round(ms / 1000)} 秒内没有响应`)), ms);
+  });
+  // 超时之后原请求再失败，不该变成未处理的 rejection
+  p.catch(() => undefined);
+  return Promise.race([p, guard]).finally(() => clearTimeout(timer));
+}
+
+/** 卡片先用抓到的元数据落库：列表和知识图谱立刻有内容，模型的活交给后台。 */
+async function seedCard(item: Paper, rec: ExternalRecord): Promise<void> {
   const old = await getCard(item.itemKey);
   const keywords = dedupeStrings([...splitTags(old?.keywords || ""), ...rec.hints.keywords]).join(", ");
   await saveCard(
@@ -523,27 +445,203 @@ async function touchCard(item: Paper, rec: ExternalRecord, withCard?: boolean): 
     },
     true,
   );
-  if (withCard ?? getSettings().kbAutoCard) {
-    try {
-      await generateCard(item.itemKey);
-    } catch (e) {
-      console.debug("[ScholarPi] 卡片生成失败", e);
+}
+
+async function persistRecord(input: string, rec: ExternalRecord, opts: ImportOpts): Promise<ImportResult> {
+  if (rec.kind === "url" && !rec.itemKey) {
+    const known = findSimilar("", rec.pdfUrl || rec.url, rec.title);
+    if (known) {
+      return { input, ok: true, itemKey: known.itemKey, title: known.title, action: "existing", pdf: !!known.pdfUrl, note: "库中已有同一篇" };
     }
   }
+  const dup = findSimilar(rec.DOI, rec.url || rec.pdfUrl, rec.title);
+  const patch = recordToPaper(rec);
+  const twin = dup && dup.itemKey !== patch.itemKey ? dup : null;
+  const item = await registerMeta(patch);
+  await seedCard(item, rec);
+  if (opts.collectionId) await collectionAdd(opts.collectionId, item.itemKey);
+  scheduleBackfill(item, rec, opts);
+  return {
+    input,
+    ok: true,
+    itemKey: item.itemKey,
+    title: item.title,
+    action: twin ? "existing" : "added",
+    pdf: !!item.pdfUrl,
+    note: twin ? `库中已有：${twin.title}` : rec.hints.citations ? `被引 ${rec.hints.citations}` : "",
+  };
+}
+
+async function persistSafe(input: string, rec: ExternalRecord, opts: ImportOpts): Promise<ImportResult> {
+  try {
+    return await persistRecord(input, rec, opts);
+  } catch (e: any) {
+    return failed(input, e?.message || e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 后台慢车道：PDF 预取占带宽、模型调用占配额，各走各的队列，都不许挡住导入
+
+const PDF_JOBS = 2;
+const BG_JOBS = 1;
+
+const pdfPending: Paper[] = [];
+const pdfQueued = new Set<string>();
+let pdfActive = 0;
+/** 元数据还没抓完时先攒着，别和它们抢网络。 */
+let pdfGo = false;
+
+function enqueuePdf(item: Paper): void {
+  if (item.source === "demo" || item.source === "upload" || !item.pdfUrl) return;
+  if (hasPdfLoaded(item) || pdfQueued.has(item.itemKey)) return;
+  pdfQueued.add(item.itemKey);
+  pdfPending.push(item);
+  drainPdf();
+}
+
+function drainPdf(): void {
+  if (!pdfGo) return;
+  while (pdfActive < PDF_JOBS && pdfPending.length) {
+    const item = pdfPending.shift()!;
+    pdfQueued.delete(item.itemKey);
+    pdfActive++;
+    void ensurePdf(item)
+      .catch((e) => console.debug("[ScholarPi] 后台预取 PDF 失败", item.itemKey, e))
+      .finally(() => {
+        pdfActive--;
+        drainPdf();
+      });
+  }
+}
+
+function releasePdfQueue(): void {
+  pdfGo = true;
+  drainPdf();
+}
+
+type BackfillJob = () => Promise<unknown>;
+const bgPending: BackfillJob[] = [];
+let bgActive = 0;
+
+function enqueueBg(job: BackfillJob): void {
+  bgPending.push(job);
+  drainBg();
+}
+
+function drainBg(): void {
+  while (bgActive < BG_JOBS && bgPending.length) {
+    const next = bgPending.shift()!;
+    bgActive++;
+    void Promise.resolve()
+      .then(next)
+      .catch((e) => console.debug("[ScholarPi] 后台补全失败", e))
+      .finally(() => {
+        bgActive--;
+        drainBg();
+      });
+  }
+}
+
+/** 打开论文时才下载是底线，导入结束后先在后台悄悄取好，让第一次点开也不用等。 */
+function scheduleBackfill(item: Paper, rec: ExternalRecord, opts: ImportOpts): void {
+  enqueuePdf(item);
+  if (opts.withCard ?? getSettings().kbAutoCard) {
+    enqueueBg(() => generateCard(item.itemKey).then(() => changed()));
+  }
+  if (rec.kind === "arxiv" && !rec.hints.citations) {
+    // 批量解析省掉了 Semantic Scholar，被引数和 tldr 在这里慢慢补回来
+    enqueueBg(async () => {
+      const s2 = await semanticPaper(`ARXIV:${item.itemKey}`);
+      const card = s2 ? await getCard(item.itemKey) : undefined;
+      if (!card) return;
+      await saveCard(
+        {
+          ...card,
+          citations: card.citations || s2!.citationCount || 0,
+          summary: card.summary || String(s2!.tldr?.text || s2!.tldr || ""),
+          updatedAt: Date.now(),
+        },
+        true,
+      );
+      changed();
+    });
+  }
+}
+
+/** arXiv 一次请求拿全部；批量接口失败才退回逐篇解析。 */
+async function arxivGroup(items: ImportJob[], opts: ImportOpts, done: (r: ImportResult, i: number) => void): Promise<void> {
+  if (!items.length) return;
+  let byId: Map<string, ExternalRecord>;
+  try {
+    byId = await withTimeout(arxivRecords(items.map((x) => x.raw), opts.signal), RESOLVE_TIMEOUT_MS + 4000, "arXiv 批量元数据");
+  } catch (e: any) {
+    console.debug("[ScholarPi] arXiv 批量解析失败，改逐篇", e);
+    await resolveGroup(items, opts, done);
+    return;
+  }
+  for (const it of items) {
+    const id = arxivStableId(it.raw);
+    const rec = byId.get(id);
+    if (!rec) done(failed(it.raw, `arXiv 上找不到 ${id}`), it.i);
+    else done(await persistSafe(it.raw, rec, opts), it.i);
+  }
+}
+
+/** 并发上限 4 的工作池：每篇 8 秒超时，一篇慢不会让整批等。 */
+async function resolveGroup(items: ImportJob[], opts: ImportOpts, done: (r: ImportResult, i: number) => void): Promise<void> {
+  if (!items.length) return;
+  let next = 0;
+  const worker = async () => {
+    for (;;) {
+      const it = items[next++];
+      if (!it) return;
+      try {
+        const rec = await withTimeout(resolveExternal(it.raw, opts.signal), RESOLVE_TIMEOUT_MS, it.raw);
+        done(await persistSafe(it.raw, rec, opts), it.i);
+      } catch (e: any) {
+        done(failed(it.raw, e?.message || e), it.i);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(RESOLVE_CONCURRENCY, items.length) }, worker));
 }
 
 export async function importIdentifiers(
   values: string[],
-  opts: { collectionId?: string; signal?: AbortSignal; withCard?: boolean; onOne?: (r: ImportResult, i: number) => void } = {},
+  opts: ImportOpts = {},
+  onOne?: (r: ImportResult, i: number) => void,
 ): Promise<ImportResult[]> {
+  const report = onOne || opts.onOne;
   const out: ImportResult[] = [];
-  for (let i = 0; i < values.length; i++) {
-    const r = await importIdentifier(values[i], opts);
-    out.push(r);
-    opts.onOne?.(r, i);
+  // 结果按输入顺序返回（调用方靠下标对齐候选文献），所以每条输入都占一个位置。
+  const plan = planImports(values);
+  let finished = 0;
+  const done = (r: ImportResult, i: number) => {
+    out[i] = r;
+    report?.(r, i);
+    // 谁触发的导入都值得看见进度：界面和 agent 都读这一条事件
+    globalEvents.emit({ type: "kb-import-progress", done: ++finished, total: values.length, ok: r.ok, title: (r.ok ? r.title : r.input).slice(0, 60) });
+  };
+  for (const b of plan.blanks) done(failed(b.raw, "内容为空"), b.i);
+  try {
+    await Promise.all([arxivGroup(plan.arxiv, opts, done), resolveGroup(plan.rest, opts, done)]);
+    changed();
+  } finally {
+    releasePdfQueue();
   }
-  changed();
-  return out;
+  return values.map((value, i) => out[i] || failed(String(value || ""), "导入未完成"));
+}
+
+/** 单篇入口（MCP 桥接器用），走的仍是同一条快路径。 */
+export async function importIdentifier(
+  value: string,
+  opts: { collectionId?: string; signal?: AbortSignal; withCard?: boolean } = {},
+): Promise<ImportResult> {
+  const input = String(value || "").trim();
+  if (!input) return failed(input, "内容为空");
+  const rows = await importIdentifiers([input], opts);
+  return rows[0] || failed(input, "导入失败");
 }
 
 /** Local PDFs: bytes go to IndexedDB, the card is created from whatever the file yields. */
@@ -570,10 +668,7 @@ export async function importFiles(files: File[], opts: { collectionId?: string; 
 }
 
 /** Paste-a-block helper used by the UI and by the agent tool alike. */
-export async function importBlock(
-  raw: string,
-  opts: { collectionId?: string; signal?: AbortSignal; withCard?: boolean; onOne?: (r: ImportResult, i: number) => void } = {},
-): Promise<ImportResult[]> {
+export async function importBlock(raw: string, opts: ImportOpts = {}): Promise<ImportResult[]> {
   return importIdentifiers(parseIdentifiers(raw), opts);
 }
 

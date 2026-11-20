@@ -412,8 +412,19 @@ async function pdfBytes(item: Paper, onProgress?: ProgressFn): Promise<ArrayBuff
   }
   const target = item.pdfUrl || item.url;
   if (!target) return null;
-  return fetchBytes(target, onProgress);
+  const cached = await db.get<{ bytes: ArrayBuffer }>("blobs", key);
+  if (cached?.bytes) {
+    onProgress?.(cached.bytes.byteLength, cached.bytes.byteLength);
+    return cached.bytes;
+  }
+  const bytes = await fetchBytes(target, onProgress);
+  // 链接类论文的字节也存进 IndexedDB：第二次点开秒开，后台预取的成果不会随刷新丢掉
+  if (bytes && bytes.byteLength <= BYTE_CACHE_MAX) await db.put("blobs", { id: key, bytes }).catch(() => undefined);
+  return bytes;
 }
+
+/** 超过这个体积就不值得占用访问者的磁盘。 */
+const BYTE_CACHE_MAX = 48 * 1024 * 1024;
 
 async function loadPdfBytes(item: Paper, bytes: ArrayBuffer): Promise<void> {
   const key = paperKey({ libraryID: item.libraryID, itemKey: item.itemKey });
