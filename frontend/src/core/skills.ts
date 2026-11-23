@@ -12,7 +12,7 @@ import { arxivSearch, semanticGraph } from "./academic";
 import { globalEvents } from "./events";
 import { cardView, importIdentifiers, listCards, searchLibrary, type ImportResult } from "./library";
 import { toSemanticId } from "./mcp";
-import { getItem, hasPdfLoaded, listPapers, paperTitle, type Paper } from "./paper";
+import { getItem, getPaperText, hasPdfLoaded, listPapers, paperTitle, type Paper } from "./paper";
 import { clip } from "./tools/common";
 
 export type SkillId = "scout" | "anatomy" | "matrix" | "gap";
@@ -287,11 +287,51 @@ ${known ? `\n知识库卡片里已有这些信息（核对后补充，不要照�
 // ---------------------------------------------------------------------------
 // 3) 跨篇对比
 
+/** 判定全文可用性时给一个上限：慢链接只牺牲自己，不拖住对比启动。 */
+function withTextTimeout<T>(p: Promise<T>, ms = 15000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("全文加载超时")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 async function buildMatrix(itemKeys: string[]): Promise<{ prompt: string; note: string; candidates: SkillCandidate[] }> {
   const keys = [...new Set(itemKeys)].filter((k) => !!getItem(k)).slice(0, 5);
   if (keys.length < 2) throw new Error("跨篇对比需要至少 2 篇文献：在左侧文献列表勾选后再运行。");
   const cards = await Promise.all(keys.map((k) => cardView(getItem(k)!)));
-  const blocks = cards.map((c, i) =>
+
+  // 先判定每篇是否有可用全文：仅链接 / 下载失败 / 扫描件（无文字层）都算「无全文」，
+  // 不进入对比表；剩下有全文的继续生成，避免缺几篇 PDF 就整体失败。
+  const readable = await Promise.all(
+    keys.map(async (k) => {
+      const it = getItem(k)!;
+      if (it.source !== "demo" && it.source !== "upload" && !it.pdfUrl) return false;
+      try {
+        const t = await withTextTimeout(getPaperText(it));
+        return t.pages.some((p) => p.trim().length > 0);
+      } catch {
+        return false;
+      }
+    }),
+  );
+  const kept = cards.filter((_, i) => readable[i]);
+  const skipped = cards.filter((_, i) => !readable[i]);
+  if (kept.length < 2) {
+    const names = skipped.map((c) => `《${c.title}》`).join("、");
+    throw new Error(
+      `勾选的文献里只有 ${kept.length} 篇有可用 PDF 全文，无法生成横向对比。缺少全文的文献：${names || "（无）"}。可尝试：导入本地 PDF、换用 arXiv 文字版，或改勾其它文献。`,
+    );
+  }
+  const blocks = kept.map((c, i) =>
     [
       `### [${i + 1}] ${c.title}`,
       `${c.authors || "作者未知"} | ${c.year || "?"} | ${c.venue || "?"}${c.DOI ? ` | DOI:${c.DOI}` : ""} | item_key=${c.itemKey}`,
@@ -305,8 +345,8 @@ async function buildMatrix(itemKeys: string[]): Promise<{ prompt: string; note: 
       .filter(Boolean)
       .join("\n"),
   );
-  const missing = cards.filter((c) => !c.method && !c.metrics);
-  const prompt = `【科研技能 · 跨篇对比】对比下面 ${cards.length} 篇文献。知识库卡片先用来填表，缺的字段再查原文。
+  const missing = kept.filter((c) => !c.method && !c.metrics);
+  const prompt = `【科研技能 · 跨篇对比】对比下面 ${kept.length} 篇文献。知识库卡片先用来填表，缺的字段再查原文。
 
 ${blocks.join("\n\n")}
 
@@ -319,9 +359,10 @@ ${blocks.join("\n\n")}
 3. **演进关系**：谁沿用了谁的做法（用 \`\`\`mermaid flowchart TD）。
 
 最后必须另起一段「⚠️ 可比性说明」：明确写出这些论文的任务与数据集口径并不相同（评测集、预处理、训练算力、参数量、是否使用外部数据都可能不一样），因此表里的数字不是同条件对比；请读者按行首的 item_key 回到原文核对指标与评价协议后再做选型。这一附注是输出的一部分，不能省略。
-${missing.length ? `\n这几篇还没有元数据卡片：${missing.map((c) => c.title).join("、")}。请用 paper_search / paper_read 补齐，并用 kb_update_card 写回。\n` : ""}
+${skipped.length ? `\n已跳过 ${skipped.length} 篇没有可用 PDF 全文的文献：${skipped.map((c) => `《${c.title}》`).join("、")}。它们不在对比表中，不要调用 paper_read / paper_search 去读它们。\n` : ""}${missing.length ? `\n这几篇还没有元数据卡片：${missing.map((c) => c.title).join("、")}。请用 paper_search / paper_read 补齐，并用 kb_update_card 写回。\n` : ""}
 需要读某篇原文时用对应 item_key 调用 paper_overview / paper_search / paper_read。`;
-  return { prompt, note: `${cards.length} 篇进入对比${missing.length ? `，其中 ${missing.length} 篇缺卡片` : ""}`, candidates: [] };
+  const note = `${kept.length} 篇进入对比${skipped.length ? `，${skipped.length} 篇无 PDF 已跳过` : ""}${missing.length ? `，其中 ${missing.length} 篇缺卡片` : ""}`;
+  return { prompt, note, candidates: [] };
 }
 
 // ---------------------------------------------------------------------------
