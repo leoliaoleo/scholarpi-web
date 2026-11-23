@@ -25,6 +25,7 @@ const RATE_COPY = "演示请求较多，已保留你的问题。你可以先查�
 const QUOTA_COPY = "演示额度这一轮已用完，稍后会自动恢复。想立刻继续，可在设置里填入自己的 Key。";
 const TIMEOUT_COPY = "这次请求超时了，草稿与已有精读报告都还在，可以再发一次。";
 const PDF_COPY = "PDF 没能在预期时间内传完，页面位置已保留；网络拥塞时重试或换原文链接更快。";
+const PDF_DENIED_COPY = "这篇论文的 PDF 无法直接下载（服务器拒绝了请求，通常需要登录或订阅）。可点「打开原文链接」或直接把 PDF 拖进来。";
 const AUTH_COPY = "演示 Key 未开启或已失效，填入自己的 DeepSeek Key 即可继续。";
 const NETWORK_COPY = "网络连接中断，输入内容已保留，可以重试。";
 
@@ -48,7 +49,10 @@ export function classifyError(raw: unknown, opts: { status?: number; retryAfter?
   const seconds = usableRetryAfter(opts.retryAfter) ?? usableRetryAfter(jsonField(text, "retryAfter"));
 
   if (opts.pdf || /pdf|下载超时|加载失败/.test(loose)) {
-    return { kind: "pdf", message: PDF_COPY, detail, actions: ["retry", "example"] };
+    const denied = opts.status === 401 || opts.status === 403 || /401|403|forbidden|denied|未授权|拒绝|登录|订阅/.test(loose);
+    return denied
+      ? { kind: "pdf", message: PDF_DENIED_COPY, detail, actions: ["retry", "example"] }
+      : { kind: "pdf", message: PDF_COPY, detail, actions: ["retry", "example"] };
   }
   const is429 = opts.status === 429 || bodyError === "rate_limited" || /\b429\b/.test(text) || /rate.?limit/.test(loose);
   if (is429) {

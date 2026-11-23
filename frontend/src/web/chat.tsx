@@ -247,7 +247,7 @@ export function PanelApp() {
   }, []);
 
   const loadSessions = useCallback(async (c: any, pickActive: boolean) => {
-    if (!c) {
+    if (!c?.ref) {
       setSessions([]);
       setActiveId(null);
       return;
@@ -264,16 +264,16 @@ export function PanelApp() {
 
   useGlobalEvents((e) => {
     const c = ctxRef.current;
-    if (e.type === "sessions-changed" && c && e.itemKey === c.ref.itemKey) void loadSessions(c, false);
-    if (e.type === "annotation-created" && c && e.itemKey === c.ref.itemKey) {
+    if (e.type === "sessions-changed" && c?.ref && e.itemKey === c.ref.itemKey) void loadSessions(c, false);
+    if (e.type === "annotation-created" && c?.ref && e.itemKey === c.ref.itemKey) {
       setToast({ text: `已创建批注（第 ${e.page} 页）`, key: e.key, libraryID: e.libraryID });
       setTimeout(() => setToast(null), 5000);
     }
-    if (e.type === "model-switched" && c && e.itemKey === c.ref.itemKey) {
+    if (e.type === "model-switched" && c?.ref && e.itemKey === c.ref.itemKey) {
       setToast({ text: `当前模型不能看图，已切换到 ${e.model}` });
       setTimeout(() => setToast(null), 5000);
     }
-    if (e.type === "note-created" && c && e.itemKey === c.ref.itemKey) {
+    if (e.type === "note-created" && c?.ref && e.itemKey === c.ref.itemKey) {
       setToast({ text: "已保存为文献笔记", key: e.key, libraryID: e.libraryID });
       setTimeout(() => setToast(null), 4000);
     }
@@ -339,7 +339,7 @@ export function PanelApp() {
     void runtime.send(content);
   };
 
-  if (!ctx) {
+  if (!ctx?.ref) {
     return (
       <div class="app">
         <div class="empty">

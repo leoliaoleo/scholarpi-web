@@ -214,8 +214,13 @@ async function handleRelayInner(req: Request): Promise<Response> {
 
   const ctype = res.headers.get("content-type") || "";
   if (wantBytes) {
-    if (!BINARY_TYPES.test(ctype) && !/pdf/i.test(url.pathname)) {
-      return apiError("not_binary", `目标不是可下载文件（${ctype || "未知类型"}）`, 415);
+    // 上游 4xx/5xx 不是「文件」而是登录墙/缺失/拒绝：给出明确错误，别把错误页当 PDF 流回浏览器。
+    if (!res.ok) {
+      return apiError("upstream_http_error", `目标服务器返回 HTTP ${res.status}（可能需要登录或订阅）`, 502);
+    }
+    // 只按内容类型放行二进制；URL 路径带 "pdf" 不再豁免 HTML / 登录页。
+    if (!BINARY_TYPES.test(ctype)) {
+      return apiError("not_binary", `目标不是 PDF 文件（${ctype || "未知类型"}）`, 415);
     }
     // Stream the response directly instead of buffering, for edge runtime compatibility
     const responseHeaders = new Headers({
