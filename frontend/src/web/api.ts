@@ -213,14 +213,36 @@ const api = {
 
   openPaper: openItemKey,
 
-  /** `[p. 5]` citation chip → scroll the reader (and outline the passage when given). */
+  /**
+   * `[p. 5]` citation chip → scroll the reader (and outline the passage when given).
+   *
+   * 跨篇对比的芯片带着自己的 `k=<item_key>`，所以这里可能要把阅读者换到另一篇论文上：
+   * 换不过去、那篇根本没有 PDF、或原句对不上，都要说出来——静默失效会让人以为圈出来的就是依据。
+   */
   async openPage(refOrKey: PaperRef | string, page: number, quote?: string): Promise<void> {
     const itemKey = typeof refOrKey === "string" ? refOrKey : refOrKey.itemKey;
-    const item = getItem(makeRef(itemKey));
-    const key = paperKey(makeRef(itemKey));
-    if (viewerState.paperKey !== key) await openItemKey(itemKey, page);
+    const ref = makeRef(itemKey);
+    const item = getItem(ref);
+    const key = paperKey(ref);
+    if (!item) {
+      viewerCommands.emit({ type: "notice", text: `这条引用指向的文献（${itemKey}）不在知识库里，第 ${page} 页无法跳转，请手动核对原文。`, tone: "warn" });
+      return;
+    }
+    // 判定口径和「跨篇对比」跳过无全文文献时保持一致：仅链接导入又没有 PDF 地址就是读不到。
+    const hasPdf = item.source === "demo" || item.source === "upload" || !!item.pdfUrl;
+    const switched = key !== viewerState.paperKey;
+    if (!hasPdf) {
+      viewerCommands.emit({
+        type: "notice",
+        text: `《${paperTitle(item)}》没有可用的 PDF 全文，第 ${page} 页无法定位，请导入本地 PDF 或换用 arXiv 文字版后手动核验。`,
+        tone: "warn",
+      });
+      return;
+    }
+    if (switched) await openItemKey(itemKey, page);
     gotoPage(page);
-    if (!item || !quote) return;
+    if (switched) viewerCommands.emit({ type: "notice", text: `已切换到《${paperTitle(item)}》第 ${page} 页。`, tone: "info" });
+    if (!quote) return;
     try {
       const loc = await locate(item, quote, page);
       highlightRects(loc.pageIndex, loc.rects, loc.viewBox);
@@ -232,7 +254,7 @@ const api = {
         type: "notice",
         text: noText
           ? String(e?.message || e)
-          : `已跳转至第 ${page} 页，未精确匹配到原句高亮：这段引用可能是改写或跨页拼接，请以页面原文为准。`,
+          : `${switched ? `已切换至《${paperTitle(item)}》：` : ""}已跳转至第 ${page} 页，未精确匹配到原句高亮：这段引用可能是改写或跨页拼接，请手动核验该页原文。`,
         tone: "warn",
       });
       console.debug("[ScholarPi] quote not located for highlight", e);

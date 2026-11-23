@@ -84,9 +84,10 @@ button { font: inherit; color: inherit; }
 .icon-btn:hover, .icon-btn[data-active="true"] { background: var(--accent-bg); color: var(--fg); }
 .link-btn { border: none; background: none; color: var(--accent); cursor: pointer; padding: 0 calc(4px * var(--site-space, 1)); text-decoration: underline; }
 
-/* 核心贡献：像笔记首页的一段摘要，而不是一块彩色面板 —— 只靠发丝线与留白分区。 */
-.conclusion { padding: calc(9px * var(--site-space, 1)) calc(12px * var(--site-space, 1)); border-bottom: 1px solid var(--border); background: var(--bg); max-height: 40%; overflow: auto; font-size: calc(12.5px * var(--site-type, 1)); line-height: 1.65; }
-.conclusion-title { font-weight: 600; margin-bottom: calc(4px * var(--site-space, 1)); font-family: var(--serif, Georgia, "Times New Roman", "Songti SC", serif); letter-spacing: 0.01em; }
+/* 核心贡献：像笔记首页的一段摘要，而不是一块彩色面板 —— 只靠发丝线与留白分区。
+   它只是「要不要读下去」的指路牌，纵向空间大半留给下面的结构化报告，所以封顶收到 30%。 */
+.conclusion { padding: calc(7px * var(--site-space, 1)) calc(12px * var(--site-space, 1)); border-bottom: 1px solid var(--border); background: var(--bg); max-height: 30%; overflow: auto; font-size: calc(12px * var(--site-type, 1)); line-height: 1.55; }
+.conclusion-title { font-weight: 600; margin-bottom: calc(2px * var(--site-space, 1)); font-family: var(--serif, Georgia, "Times New Roman", "Songti SC", serif); letter-spacing: 0.01em; }
 /* 默认只铺三条贡献：每条是一个独立列表，收紧它们之间的间距。 */
 .conclusion .md { margin: 0; }
 .conclusion .md ul, .conclusion .md ol { margin: 0; padding-left: calc(17px * var(--site-space, 1)); }
@@ -103,7 +104,8 @@ button { font: inherit; color: inherit; }
 .note-actions .chip.note-dl-alert { border-color: var(--accent); color: var(--accent); background: var(--accent-bg); font-weight: 600; }
 .note-status { flex: 1 1 100%; margin-top: calc(2px * var(--site-space, 1)); }
 .note-fallback { display: block; width: 100%; min-height: 84px; margin-top: calc(5px * var(--site-space, 1)); font-size: calc(11.5px * var(--site-type, 1)); font-family: ui-monospace, Menlo, Consolas, monospace; }
-.banner { padding: calc(6px * var(--site-space, 1)) calc(12px * var(--site-space, 1)); background: #f7f0dd; color: #5c4a1f; font-size: calc(12.5px * var(--site-type, 1)); }
+/* 额度/Key 状态条只说一件事：一行讲完就收起，别把正文往下顶。 */
+.banner { padding: calc(3px * var(--site-space, 1)) calc(12px * var(--site-space, 1)); background: #f7f0dd; color: #5c4a1f; font-size: calc(11.5px * var(--site-type, 1)); line-height: 1.45; }
 @media (prefers-color-scheme: dark) { .banner { background: #3a3016; color: #eddba4; } }
 
 .scroll { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: calc(10px * var(--site-space, 1)) calc(12px * var(--site-space, 1)); min-height: 0; }
@@ -139,8 +141,39 @@ button { font: inherit; color: inherit; }
 .md code { background: var(--code-bg); border-radius: calc(var(--site-radius, 8px) * 0.5); padding: 0.05em 0.3em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.92em; }
 .md pre { background: var(--code-bg); border-radius: calc(var(--site-radius, 8px) * 0.75); padding: calc(8px * var(--site-space, 1)) calc(10px * var(--site-space, 1)); overflow-x: auto; }
 .md pre code { background: none; padding: 0; }
-.md table { border-collapse: collapse; margin: 0.5em 0; display: block; overflow-x: auto; max-width: 100%; }
-.md th, .md td { border: 1px solid var(--border); padding: calc(3px * var(--site-space, 1)) calc(8px * var(--site-space, 1)); }
+/* 对比表：六列不挤在窄栏里。列有最小宽度，撑不下的部分由 .md-table-scroll 自己横向滚动。 */
+.md-table { position: relative; margin: 0.6em 0; }
+.md-table-bar { display: flex; justify-content: flex-end; margin-bottom: calc(3px * var(--site-space, 1)); }
+.md-table-zoom {
+  font-family: inherit;
+  font-size: calc(11.5px * var(--site-type, 1));
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--site-radius, 8px) * 0.5);
+  padding: calc(2px * var(--site-space, 1)) calc(7px * var(--site-space, 1));
+  cursor: pointer;
+}
+.md-table-zoom:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-bg); }
+.md-table-scroll { overflow-x: auto; }
+.md table { border-collapse: collapse; margin: 0; width: 100%; }
+.md th:first-child, .md td:first-child { min-width: 140px; }
+.md td { min-width: 160px; }
+/* 展开宽屏：同一张表换个宽度再画一次，页码芯片照旧可点。 */
+.md-table-modal { padding: calc(14px * var(--site-space, 1)); }
+.md-table-card {
+  position: relative;
+  width: min(1180px, 100%);
+  max-height: 100%;
+  overflow: auto;
+  background: var(--bg);
+  border-radius: calc(var(--site-radius, 8px) * 0.9);
+  box-shadow: var(--shadow);
+  padding: calc(12px * var(--site-space, 1)) calc(16px * var(--site-space, 1));
+}
+.md-table-head { display: flex; align-items: center; justify-content: space-between; gap: calc(8px * var(--site-space, 1)); margin-bottom: calc(6px * var(--site-space, 1)); }
+.md-table-wide th, .md-table-wide td { min-width: 0; }
+.md th, .md td { border: 1px solid var(--border); padding: calc(3px * var(--site-space, 1)) calc(8px * var(--site-space, 1)); vertical-align: top; }
 .md th { background: var(--bg2); }
 .md a { color: var(--accent); text-decoration: none; }
 .md a:hover { text-decoration: underline; }

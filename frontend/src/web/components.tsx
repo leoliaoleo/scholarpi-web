@@ -4,6 +4,7 @@ import { Markdown } from "./markdown";
 import { splitBullets } from "../shared/markdown";
 import { COPY_FLASH_MS, EMPTY_NOTE_HINT, copyButtonLabel, copyHint } from "../shared/clipboard";
 import { classifyError, retryLabel, type ErrorAction } from "../shared/errors";
+import { skillDigest } from "../shared/skillprompt";
 import { getApi } from "./api";
 import { EXAMPLE_ITEM_KEY } from "../core/presets";
 
@@ -200,6 +201,10 @@ function Thinking({ text, live }: { text: string; live: boolean }) {
 }
 
 export function UserMessage({ message }: { message: any }) {
+  const text = textOf(message);
+  // 技能按钮发出去的是写给模型的工单，不是人话：默认只说一句「对比这 N 篇论文」，工单收进展开层。
+  const digest = useMemo(() => skillDigest(text), [text]);
+  const [open, setOpen] = useState(false);
   return (
     <div class="msg user">
       <div class="bubble">
@@ -210,7 +215,17 @@ export function UserMessage({ message }: { message: any }) {
             ))}
           </div>
         )}
-        <Markdown text={textOf(message)} />
+        {digest ? (
+          <div class="thinking skill-digest">
+            <div>{digest.label}</div>
+            <button class="thinking-head" onClick={() => setOpen(!open)}>
+              {open ? "收起指令原文" : "查看发给模型的完整指令"} <span class="chev">{open ? "▾" : "▸"}</span>
+            </button>
+            {open && <div class="thinking-body">{digest.detail}</div>}
+          </div>
+        ) : (
+          <Markdown text={text} />
+        )}
       </div>
     </div>
   );
@@ -673,12 +688,51 @@ export function MessageList({
 /** Where each conversation was left, so a paper switch does not rewind the report. */
 const scrollMemory = new Map<string, number>();
 
+/** 从首页预览点页码芯片进来时，右侧报告该停在哪一条结论上。 */
+export interface CiteFocus {
+  itemKey: string;
+  page: number;
+  quote: string;
+  /** 递增号：连着点两次同一页也要重新定位一次。 */
+  nonce: number;
+}
+
+const normQuote = (s: string) => String(s || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * 找到承载这条引用的那一块（列表项/段落/表格行），而不是整条消息：
+ * 一次精读报告是一整个 .turn，滚到它开头等于什么都没指出来。
+ */
+function citeBlock(el: HTMLElement, f: CiteFocus): HTMLElement | null {
+  for (const a of Array.from(el.querySelectorAll<HTMLAnchorElement>("a[href^='page:']"))) {
+    const href = a.getAttribute("href") || "";
+    const page = /^page:\s*(\d+)/i.exec(href)?.[1];
+    if (page !== String(f.page)) continue;
+    if (f.quote) {
+      const raw = /[?&]q=([^&]*)/.exec(href)?.[1] || "";
+      let q = "";
+      try {
+        q = decodeURIComponent(raw.replace(/\+/g, " "));
+      } catch {
+        q = raw;
+      }
+      // 芯片里的原句和正文里的是同一串；真对不上时退回「同页即算」，别让人一直等。
+      const nq = normQuote(q);
+      const want = normQuote(f.quote);
+      if (nq && want && !nq.startsWith(want) && !want.startsWith(nq)) continue;
+    }
+    return (a.closest("li, p, tr, blockquote") as HTMLElement) || a;
+  }
+  return null;
+}
+
 /**
  * Scroll container that sticks to the bottom while content streams in.
  *
  * The first settled render is special: a conversation we have seen before goes back
  * to its own offset, and a freshly seeded close-reading stops at its first core
  * contribution (`anchor`) instead of the bottom of a five-thousand-word report.
+ * 首页预览带进来的 `focus` 优先级更高：它知道读者关心的究竟是哪一条结论。
  */
 export function AutoScroll({
   children,
@@ -686,6 +740,7 @@ export function AutoScroll({
   ready = true,
   memoryKey = "",
   anchor = "",
+  focus = null,
 }: {
   children: ComponentChildren;
   dep: any;
@@ -694,10 +749,12 @@ export function AutoScroll({
   memoryKey?: string;
   /** Selector for the block a cold report should open on, e.g. "h2". */
   anchor?: string;
+  focus?: CiteFocus | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const settled = useRef(false);
+  const focused = useRef(0);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !ready) return;
@@ -720,6 +777,32 @@ export function AutoScroll({
     }
     if (stick.current) el.scrollTop = el.scrollHeight;
   }, [dep, ready]);
+  // 预置会话是异步落盘的：那一条结论还没渲染出来时按帧等一下，但要有尽头，不能空转。
+  useEffect(() => {
+    const f = focus;
+    if (!f || !f.nonce || focused.current === f.nonce) return;
+    let tries = 0;
+    let raf = 0;
+    const step = () => {
+      const el = ref.current;
+      if (!el) return;
+      const hit = citeBlock(el, f);
+      if (hit) {
+        focused.current = f.nonce;
+        // 定位之后把「跟到底部」关掉，否则下一帧流式更新又把读者拽回全文末尾。
+        stick.current = false;
+        settled.current = true;
+        const top = hit.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+        el.scrollTop = Math.max(0, top - Math.round(el.clientHeight / 3));
+        hit.classList.add("kb-flash");
+        return;
+      }
+      if (++tries > 40) return;
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [focus?.nonce, ready]);
   return (
     <div
       class="scroll"

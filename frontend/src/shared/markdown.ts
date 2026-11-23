@@ -135,7 +135,22 @@ function mathPlugin(md: MD, render: MathRenderer) {
 export function createMarkdown(render: MathRenderer): MD {
   const md = new MarkdownIt({ html: false, linkify: true, breaks: false, typographer: false });
   md.use(mathPlugin, render);
+  md.use(brPlugin);
   return md;
+}
+
+/**
+ * 模型在表格里习惯用 `<br>` 分行。原始 HTML 仍然整体关掉，但这一个换行标签要认下来：
+ * 换成真正的换行，而不是让 `<br>` 以文本形式留在页面上。
+ */
+function brPlugin(md: MD): void {
+  md.inline.ruler.before("html_inline", "br_tag", (state, silent) => {
+    const m = /^<br\s*\/?>/i.exec(state.src.slice(state.pos, state.pos + 8));
+    if (!m) return false;
+    if (!silent) state.push("hardbreak", "br", 0);
+    state.pos += m[0].length;
+    return true;
+  });
 }
 
 /** Top-level markdown bullets, each kept whole because a citation chip may live inside one. */

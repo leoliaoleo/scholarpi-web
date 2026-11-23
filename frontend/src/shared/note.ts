@@ -29,7 +29,11 @@ export function plainCitations(md: string): string {
     const page = String(hrefRaw || "").match(/^page:\s*(\d+)/i)?.[1];
     if (!page) return label;
     // 「[p. 5](page:5?q=…)」的可见文字已经是页码本身，直接留 [p. 5]；引文型标签则附在句尾。
-    return /^p\.?\s*\d+$/i.test(label) ? `[p. ${page}]` : label ? `${label} [p. ${page}]` : `[p. ${page}]`;
+    if (/^p\.?\s*\d+$/i.test(label)) return `[p. ${page}]`;
+    // 跨篇对比的芯片长成「[Transformer · p. 2](page:2?…)」：标签里已经写着同一个页码，别再重复一遍，
+    // 但方括号要留在笔记里——它是一条引用，不是一句普通 prose。
+    if (new RegExp(`p\\.?\\s*${page}\\b`, "i").test(label)) return `[${label}]`;
+    return label ? `${label} [p. ${page}]` : `[p. ${page}]`;
   });
 }
 
@@ -37,11 +41,13 @@ export interface PageChip {
   page: number;
   /** 已经解码过的原文，交给 `api.openPage` 圈句子；没有就只跳页。 */
   quote: string;
+  /** 跨篇对比的芯片带着目标论文 itemKey；单篇报告不带，点击时退回当前论文。 */
+  key?: string;
 }
 
 /** 报告里真实可点的页码证据：欢迎区的「示例预览」复用同一批芯片，不另写一套引用。 */
 export function pageChips(md: string): PageChip[] {
-  const CHIP = /\[p\.\s*(\d+)\]\(page:(\d+)(?:\?q=([^)\s]+))?\)/g;
+  const CHIP = /\[((?:[^\]]|\[[^\]]*\])*?)\]\(page:(\d+)(?:\?q=([^)&]*))?(?:&k=([^)\s]*))?\)/g;
   const out: PageChip[] = [];
   for (const m of String(md || "").matchAll(CHIP)) {
     const page = Number(m[2]);
@@ -52,7 +58,8 @@ export function pageChips(md: string): PageChip[] {
     } catch {
       quote = "";
     }
-    out.push({ page, quote });
+    const key = String(m[4] || "").trim();
+    out.push({ page, quote, ...(key ? { key } : {}) });
   }
   return out;
 }

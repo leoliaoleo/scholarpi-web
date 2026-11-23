@@ -1,13 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { clone, getApi, subscribe } from "./api";
 import { ActivityBar, AutoScroll, Composer, ConclusionDigest, MessageList, NoteActions, QuickError, Thumb, copyText, textOf } from "./components";
+import type { CiteFocus } from "./components";
 import { Markdown } from "./markdown";
 import { arxivIdOf, buildNote, noteFileName, transcriptSections, type NoteSource } from "../shared/note";
 import { COPY_FLASH_MS } from "../shared/clipboard";
+import { Emitter } from "../core/events";
 import { presetFor } from "../core/presets";
 import { SkillBox } from "./skills";
 
 const api = getApi();
+
+/**
+ * 首页预览点 p.x 芯片进来看的是那一条结论，不是报告末尾。会话面板正是被这一次点击才挂载的，
+ * 组件内订阅赶不上事件发出，所以在模块层先记一笔账：已挂载的实例收到通知，刚挂载的实例从
+ * 初始 state 里读到同一次请求（和多选条 focus-library 用的是同一个办法）。
+ */
+const reportFocus = new Emitter<CiteFocus>();
+let focusNonce = 0;
+let pendingFocus: CiteFocus | null = null;
+api.events.on((e: any) => {
+  if (e.type !== "focus-report") return;
+  pendingFocus = { itemKey: String(e.itemKey || ""), page: Number(e.page) || 0, quote: String(e.quote || ""), nonce: ++focusNonce };
+  reportFocus.emit(pendingFocus);
+});
 
 // ---------------------------------------------------------------- hooks
 
@@ -103,8 +119,10 @@ function useLinkHandler(paperRef: () => any) {
       e.preventDefault();
       const href = a.getAttribute("href") || "";
       const ref = paperRef();
-      let m = href.match(/^page:\s*(\d+)(?:\?q=([^&]*))?/i);
-      if (m && ref) return void api.openPage(ref, Number(m[1]), quoteOf(m[2]));
+      // 跨篇对比的芯片带 `&k=<item_key>`：要点的是那一篇的 PDF，不是当前会话那篇，
+      // 否则「BERT · p. 4」会把 Transformer 翻到第 4 页——看着像生效，其实全错。
+      let m = href.match(/^page:\s*(\d+)(?:\?q=([^&]*))?(?:&k=([^&]*))?/i);
+      if (m && ref) return void api.openPage(m[3]?.trim() || ref, Number(m[1]), quoteOf(m[2]));
       m = href.match(/^annotation:([A-Z0-9]{8})/i);
       if (m && ref) return void api.openAnnotation(ref.libraryID, m[1]);
       api.launchURL(href);
@@ -235,6 +253,7 @@ export function PanelApp() {
   const [showConclusion, setShowConclusion] = useState<boolean | null>(null);
   const [toast, setToast] = useState<{ text: string; key?: string; libraryID?: number; icon?: string } | null>(null);
   const [health, setHealth] = useState<any>(null);
+  const [citeFocus, setCiteFocus] = useState<CiteFocus | null>(() => pendingFocus);
   const { settings, models } = useSettings();
   const { snap, runtime } = useSession(activeId);
   const ctxRef = useRef(ctx);
@@ -242,6 +261,11 @@ export function PanelApp() {
   const onLink = useLinkHandler(() => ctxRef.current?.ref);
 
   useEffect(() => subscribe(api.context.changes, (c: any) => setCtx(clone(c))), []);
+  // 这笔账只认一次：进来时定位到那条结论，之后再回到这篇论文就听读者自己滚过的位置。
+  useEffect(() => {
+    pendingFocus = null;
+    return reportFocus.on(setCiteFocus);
+  }, []);
   useEffect(() => {
     void api.health().then(setHealth);
   }, []);
@@ -431,6 +455,7 @@ export function PanelApp() {
         ready={!!snap}
         memoryKey={activeId || ""}
         anchor={presetReport ? "h2" : ""}
+        focus={citeFocus && citeFocus.itemKey === ctx.ref.itemKey ? citeFocus : null}
       >
         {snap ? (
           <MessageList

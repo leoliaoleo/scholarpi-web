@@ -424,7 +424,11 @@ function StartPanel({ demo, onOpen, onUpload, error }: { demo: Paper[]; onOpen: 
                   class="chip sp-chip"
                   key={`${c.page}-${i}`}
                   title={`跳到第 ${c.page} 页并圈出原句`}
-                  onClick={() => void api.openPage(example.itemKey, c.page, c.quote || undefined)}
+                  onClick={() => {
+                    // 先看左侧跳到哪一页，再告诉右侧该停在哪一条结论：两边指同一句话才叫「可查」。
+                    api.events.emit({ type: "focus-report", itemKey: example.itemKey, page: c.page, quote: c.quote });
+                    void api.openPage(example.itemKey, c.page, c.quote || undefined);
+                  }}
                 >
                   p. {c.page}
                 </button>
