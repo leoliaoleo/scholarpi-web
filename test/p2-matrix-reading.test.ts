@@ -150,8 +150,11 @@ test("正文可用的纵向空间：摘要区与额度条都收成一行级别",
   assert.match(conclusion, /max-height: 30%;/, "摘要区封顶从 40% 收到 30%");
   assert.match(conclusion, /padding: calc\(7px/, "上下留白同步收紧");
   assert.doesNotMatch(conclusion, /max-height: 40%/);
-  assert.match(conclusion, /flex: 0 0 auto/, "摘要区不许参与收缩：否则矮屏上五千字报告把它压成一像素");
+  assert.match(conclusion, /flex: 0 1 auto/, "摘要区参与收缩：整栏放不下时它得先让位，而不是把报告挤成二十像素");
+  assert.match(conclusion, /min-height: 46px/, "让位也要留得住一行标题");
   assert.match(css, /\.scroll \{ flex: 1 1 0;/, "正文按 0 起步再长满剩余空间，而不是拿 scrollHeight 去参与收缩");
+  assert.match(css, /\.pane-chat \.scroll \{ min-height: 132px; \}/, "报告栏有保底高度，芯片点击后才有地方停留");
+  assert.match(css, /\.skill-box \{[^}]*flex: 0 1 auto; min-height: 0; overflow-y: auto;/, "工具箱矮屏时自己滚动，不把报告顶出可视区");
   const banner = css.slice(css.indexOf(".banner {"), css.indexOf("@media (prefers-color-scheme: dark) { .banner"));
   assert.match(banner, /padding: calc\(3px/, "额度条只占一行");
   assert.match(banner, /font-size: calc\(11\.5px/);
