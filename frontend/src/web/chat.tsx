@@ -122,13 +122,35 @@ function useLinkHandler(paperRef: () => any) {
       // 跨篇对比的芯片带 `&k=<item_key>`：要点的是那一篇的 PDF，不是当前会话那篇，
       // 否则「BERT · p. 4」会把 Transformer 翻到第 4 页——看着像生效，其实全错。
       let m = href.match(/^page:\s*(\d+)(?:\?q=([^&]*))?(?:&k=([^&]*))?/i);
-      if (m && ref) return void api.openPage(m[3]?.trim() || ref, Number(m[1]), quoteOf(m[2]));
+      if (m && ref) return void api.openPage(chipKey(a, m[3], ref), Number(m[1]), quoteOf(m[2]));
       m = href.match(/^annotation:([A-Z0-9]{8})/i);
       if (m && ref) return void api.openAnnotation(ref.libraryID, m[1]);
       api.launchURL(href);
     },
     [paperRef],
   );
+}
+
+/**
+ * 芯片指向哪一篇：`&k=` 说了为准。
+ *
+ * 少了 `k=` 就退回当前会话太危险——跨篇对比里那会把 A 的第 2 页翻成 B 的第 2 页，看着还像成功了。
+ * 所以先按所在行再认一次：模型经常把 item_key 写满首列、却漏掉芯片的 k=。一行只认得出唯一一篇
+ * 才用它；认不出或撞出两篇仍旧退回，那时 openPage 会明说现在翻的是哪一篇。
+ */
+function chipKey(a: HTMLElement, fromHref: string | undefined, ref: any): string {
+  const key = fromHref?.trim();
+  if (key) return key;
+  const first = a.closest("tr")?.children?.[0]?.textContent ?? "";
+  if (!first) return ref;
+  const upper = first.toUpperCase();
+  const hits = new Set(
+    api
+      .papers.list()
+      .filter((p) => (!!p.itemKey && first.includes(p.itemKey)) || (!!p.DOI && p.DOI.length > 5 && upper.includes(p.DOI.toUpperCase())))
+      .map((p) => p.itemKey),
+  );
+  return hits.size === 1 ? [...hits][0] : ref;
 }
 
 /** `[p. 5](page:5?q=…)`: the verbatim words the answer is based on, URL-encoded. */

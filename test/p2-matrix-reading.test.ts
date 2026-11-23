@@ -71,7 +71,9 @@ test("芯片带 k=<item_key>：页码、原句、论文标识一起解析出来"
 test("点击芯片按 k 换 PDF；换不了、没全文、对不上句都要说出来", () => {
   const chat = source("web/chat.tsx");
   assert.match(chat, /\(\?:\\\?q=\(\[\^&\]\*\)\)\?\(\?:&k=\(\[\^&\]\*\)\)\?/, "href 里要拆得出 q 和 k");
-  assert.match(chat, /api\.openPage\(m\[3\]\?\.trim\(\) \|\| ref, Number\(m\[1\]\), quoteOf\(m\[2\]\)\)/, "带 k 就点那一篇，不带才退回当前会话");
+  assert.match(chat, /api\.openPage\(chipKey\(a, m\[3\], ref\), Number\(m\[1\]\), quoteOf\(m\[2\]\)\)/, "带 k 就点那一篇，不带才退回当前会话");
+  assert.match(chat, /const first = a\.closest\("tr"\)\?\.children\?\.\[0\]\?\.textContent/, "缺 k= 时先按所在行的首列再认一次论文");
+  assert.match(chat, /return hits\.size === 1 \? \[\.\.\.hits\]\[0\] : ref;/, "一行里认不出唯一一篇就不猜，退回后由 openPage 说清楚");
 
   const api = source("web/api.ts");
   assert.match(api, /没有可用的 PDF 全文，第 \$\{page\} 页无法定位/, "只有链接没有 PDF 时要说清该怎么做");
@@ -111,7 +113,12 @@ test("跨任务对比只按场景给建议，禁止统一优劣排名", () => {
   assert.ok(at > 0 && skills.indexOf("// 4) Research Gap") > at, "切片范围要真的罩住 buildMatrix");
   const prompt = skills.slice(at, skills.indexOf("// 4) Research Gap"));
   assert.match(prompt, /短名/, "全表用同一个短名，读者才知道 [Transformer · p. 2] 指的是谁");
-  assert.match(prompt, /\[<短名> · p\. N\]\(page:N\?q=<URL-encoded 原文片段>&k=<item_key>\)/, "芯片格式里必须带 item_key");
+  assert.match(prompt, /芯片标签写成「短名 · p\. N」/, "芯片光写 p. N 认不出是谁的页码");
+  assert.match(prompt, /\| 论文（年份，venue）<br>item_key=…/, "首列那一格要带上这一篇的 item_key");
+  assert.match(prompt, /✅ \[Transformer · p\. 2\]\(page:2\?q=Attention%20Is%20All%20You%20Need&k=1706\.03762\)/, "正例里的芯片必须带 k=");
+  assert.match(prompt, /❌ \[p\. 2\]\(page:2\?q=Attention%20Is%20All%20You%20Need\)/, "反例要写清楚：少 k= 的芯片看着能用，其实翻错论文");
+  assert.match(prompt, /每一处 page: 链接都必须带 &k=/, "表格、正文、选型建议都不能漏");
+  assert.match(prompt, /\[短名 · p\. N\]\(page:N&k=<item_key>\)/, "拿不准原句时的退让写法也得带 k=");
   assert.match(prompt, /禁止据此给出统一的优劣排名|禁止.*排名/);
   assert.match(prompt, /训练硬件（GPU 数量、训练时长）/, "不许拿算力数字当高下");
   assert.match(prompt, /按场景的选型建议/);
