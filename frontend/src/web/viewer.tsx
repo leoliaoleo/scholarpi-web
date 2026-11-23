@@ -833,7 +833,7 @@ function visiblePageIndex(el: HTMLElement): number {
  * never more than one click away, and nothing on the page has been thrown away.
  */
 function PdfError({ error, item, onRetry }: { error: string; item: Paper | null; onRetry: () => void }) {
-  const err = classifyError(error);
+  const err = classifyError(error, { pdf: true });
   const href = safeUrl(item?.pdfUrl) || safeUrl(item?.url);
   return (
     <div class="error-box">

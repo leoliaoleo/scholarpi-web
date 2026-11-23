@@ -323,8 +323,8 @@ async function buildMatrix(itemKeys: string[]): Promise<{ prompt: string; note: 
       }
     }),
   );
-  const kept = cards.filter((_, i) => readable[i]);
-  const skipped = cards.filter((_, i) => !readable[i]);
+  const kept = cards.filter((_, i) => readable[i]); // 有全文 --- 进表
+  const skipped = cards.filter((_, i) => !readable[i]); // 没有全文 --- 不进表
   if (kept.length < 2) {
     const names = skipped.map((c) => `《${c.title}》`).join("、");
     throw new Error(

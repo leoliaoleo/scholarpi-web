@@ -164,6 +164,14 @@ test("每日额度、超时、PDF、鉴权、断网各有各的说法", () => { 
   assert.equal(classifyError("HTTP 500 服务器开小差了").kind, "unknown");
 });
 
+test("PDF 下载被 403 拒绝时算「PDF 拒绝」，不误报成 DeepSeek Key", () => {
+  const err = classifyError("HTTP 403", { pdf: true });
+  assert.equal(err.kind, "pdf");
+  assert.match(err.message, /无法直接下载/);
+  assert.match(classifyError("目标服务器返回 HTTP 403（可能需要登录或订阅）", { pdf: true }).message, /无法直接下载/);
+  assert.equal(classifyError("HTTP 403").kind, "auth", "LLM 路径的 403 仍按鉴权处理");
+});
+
 test("没有可信等待时间时绝不编造倒计时", () => {
   for (const bad of [undefined, null, 0, -3, NaN, "abc", "", "0"]) assert.equal(usableRetryAfter(bad), undefined, String(bad));
   assert.equal(usableRetryAfter("45"), 45);

@@ -10,6 +10,7 @@ import * as db from "./db";
 import { dropDoc, getPagesText, hasDoc, loadDoc } from "./reader";
 import { detectHeadings, type Heading } from "./text";
 import { paperKey } from "./viewer-state";
+import { isPdfBytes } from "./pdf";
 
 export interface PaperRef {
   libraryID: number;
@@ -418,6 +419,11 @@ async function pdfBytes(item: Paper, onProgress?: ProgressFn): Promise<ArrayBuff
     return cached.bytes;
   }
   const bytes = await fetchBytes(target, onProgress);
+  // 下载到的不一定是 PDF：登录页、HTML 错误页、跳转链接都会原样返回。先校验魔数，
+  // 不是 PDF 就抛错且绝不缓存，避免把「下载失败」当成「已下载」存进 IndexedDB。
+  if (!isPdfBytes(bytes)) {
+    throw new Error("下载到的内容不是 PDF（可能是登录页、HTML 错误页或跳转链接），未缓存。");
+  }
   // 链接类论文的字节也存进 IndexedDB：第二次点开秒开，后台预取的成果不会随刷新丢掉
   if (bytes && bytes.byteLength <= BYTE_CACHE_MAX) await db.put("blobs", { id: key, bytes }).catch(() => undefined);
   return bytes;
