@@ -777,31 +777,32 @@ export function AutoScroll({
     }
     if (stick.current) el.scrollTop = el.scrollHeight;
   }, [dep, ready]);
-  // 预置会话是异步落盘的：那一条结论还没渲染出来时按帧等一下，但要有尽头，不能空转。
+  // 预置会话是异步落盘的：那一条结论还没渲染出来时得等它，但要用 MutationObserver 等——
+  // 后台标签页里 requestAnimationFrame 根本不跑，按帧重试等于没重试。
   useEffect(() => {
+    const el = ref.current;
     const f = focus;
-    if (!f || !f.nonce || focused.current === f.nonce) return;
-    let tries = 0;
-    let raf = 0;
-    const step = () => {
-      const el = ref.current;
-      if (!el) return;
+    if (!el || !f || !f.nonce || focused.current === f.nonce) return;
+    const apply = () => {
       const hit = citeBlock(el, f);
-      if (hit) {
-        focused.current = f.nonce;
-        // 定位之后把「跟到底部」关掉，否则下一帧流式更新又把读者拽回全文末尾。
-        stick.current = false;
-        settled.current = true;
-        const top = hit.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
-        el.scrollTop = Math.max(0, top - Math.round(el.clientHeight / 3));
-        hit.classList.add("kb-flash");
-        return;
-      }
-      if (++tries > 40) return;
-      raf = requestAnimationFrame(step);
+      if (!hit) return false;
+      focused.current = f.nonce;
+      // 定位之后把「跟到底部」关掉，否则下一帧流式更新又把读者拽回全文末尾。
+      stick.current = false;
+      settled.current = true;
+      const top = hit.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop;
+      el.scrollTop = Math.max(0, top - Math.round(el.clientHeight / 3));
+      hit.classList.add("kb-flash");
+      return true;
     };
-    raf = requestAnimationFrame(step);
-    return () => cancelAnimationFrame(raf);
+    if (apply()) return;
+    const mo = new MutationObserver(() => apply() && mo.disconnect());
+    mo.observe(el, { childList: true, subtree: true });
+    const stop = setTimeout(() => mo.disconnect(), 10000); // 报告里真没有这条引用时要有尽头
+    return () => {
+      mo.disconnect();
+      clearTimeout(stop);
+    };
   }, [focus?.nonce, ready]);
   return (
     <div

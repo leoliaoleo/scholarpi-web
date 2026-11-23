@@ -139,7 +139,9 @@ test("从首页预览点页码进来：右侧停在那条结论，不是报告�
   assert.match(comp, /stick\.current = false;\n\s*settled\.current = true;/, "定位后必须关掉跟到底部，否则下一帧又回到末尾");
   assert.match(comp, /el\.scrollTop = Math\.max\(0, top - Math\.round\(el\.clientHeight \/ 3\)\)/, "停在视野上三分之一，左右两栏同时看得见");
   assert.match(comp, /hit\.classList\.add\("kb-flash"\)/, "闪一下，读者知道停的是哪条");
-  assert.match(comp, /if \(\+\+tries > 40\) return;/, "报告里真没有这条引用时要有尽头，不能空转");
+  assert.match(comp, /new MutationObserver\(\(\) => apply\(\) && mo\.disconnect\(\)\)/, "预置会话异步落盘，要等 DOM 而不是等帧：后台标签页里 rAF 根本不跑");
+  assert.doesNotMatch(comp, /requestAnimationFrame\(step\)/, "按帧重试这套在隐藏标签页里是死路");
+  assert.match(comp, /setTimeout\(\(\) => mo\.disconnect\(\), 10000\)/, "报告里真没有这条引用时要有尽头，不能一直挂着观察器");
 });
 
 test("正文可用的纵向空间：摘要区与额度条都收成一行级别", () => {
@@ -148,6 +150,8 @@ test("正文可用的纵向空间：摘要区与额度条都收成一行级别",
   assert.match(conclusion, /max-height: 30%;/, "摘要区封顶从 40% 收到 30%");
   assert.match(conclusion, /padding: calc\(7px/, "上下留白同步收紧");
   assert.doesNotMatch(conclusion, /max-height: 40%/);
+  assert.match(conclusion, /flex: 0 0 auto/, "摘要区不许参与收缩：否则矮屏上五千字报告把它压成一像素");
+  assert.match(css, /\.scroll \{ flex: 1 1 0;/, "正文按 0 起步再长满剩余空间，而不是拿 scrollHeight 去参与收缩");
   const banner = css.slice(css.indexOf(".banner {"), css.indexOf("@media (prefers-color-scheme: dark) { .banner"));
   assert.match(banner, /padding: calc\(3px/, "额度条只占一行");
   assert.match(banner, /font-size: calc\(11\.5px/);
