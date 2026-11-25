@@ -1,0 +1,253 @@
+{
+  "version": 1,
+  "kind": "research",
+  "oneLine": "提出仅基于注意力的 Transformer，抛弃循环与卷积，在翻译任务上更快更强。",
+  "sections": [
+    {
+      "id": "sec:abstract",
+      "title": "摘要拆解",
+      "summary": "摘要逐句拆开：问题、做法、两个翻译任务上的结果与推广。",
+      "anchors": [
+        {
+          "page": 1,
+          "quote": "We propose a new simple network architecture, the Transformer, based solely on attention mechanisms"
+        }
+      ],
+      "children": [
+        {
+          "id": "a1",
+          "title": "背景",
+          "summary": "主流序列转导模型基于复杂的循环或卷积网络，含编码器-解码器。",
+          "anchors": [
+            {
+              "page": 1,
+              "quote": "The dominant sequence transduction models are based on complex recurrent or convolutional neural networks"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "a2",
+          "title": "已有方法",
+          "summary": "表现最好的模型再通过注意力机制连接编码器与解码器。",
+          "anchors": [
+            {
+              "page": 1,
+              "quote": "The best performing models also connect the encoder and decoder through an attention mechanism"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "a3",
+          "title": "方法",
+          "summary": "提出 Transformer：完全依赖注意力，彻底去掉循环与卷积。",
+          "anchors": [
+            {
+              "page": 1,
+              "quote": "dispensing with recurrence and convolutions entirely"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "a4",
+          "title": "实验",
+          "summary": "两个机器翻译任务上质量更优、更可并行、训练更省时。",
+          "anchors": [
+            {
+              "page": 1,
+              "quote": "Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "a5",
+          "title": "结果",
+          "summary": "英德 28.4 BLEU，比含集成的最佳结果再高 2 BLEU 以上。",
+          "anchors": [
+            {
+              "page": 1,
+              "quote": "improving over the existing best results, including ensembles, by over 2 BLEU"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "a6",
+          "title": "结论",
+          "summary": "同一套结构直接用于英语成分句法分析也成立。",
+          "anchors": [
+            {
+              "page": 1,
+              "quote": "the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing"
+            }
+          ],
+          "children": []
+        }
+      ],
+      "key": "abstract"
+    },
+    {
+      "id": "sec:background",
+      "title": "任务背景",
+      "summary": "序列建模与机器翻译的 SOTA 一直是 RNN / LSTM / GRU 的编码器-解码器。",
+      "anchors": [
+        {
+          "page": 2,
+          "quote": "have been firmly established as state of the art approaches in sequence modeling and transduction problems"
+        }
+      ],
+      "children": [
+        {
+          "id": "b1",
+          "title": "串行瓶颈",
+          "summary": "隐状态逐步依赖前一步，样本内无法并行，长序列还受内存限制。",
+          "anchors": [
+            {
+              "page": 2,
+              "quote": "This inherently sequential nature precludes parallelization within training examples"
+            }
+          ],
+          "children": []
+        }
+      ],
+      "key": "background"
+    },
+    {
+      "id": "sec:traditional",
+      "title": "传统方法及问题",
+      "summary": "注意力成了标配，但几乎总是挂在循环网络旁边用。",
+      "anchors": [
+        {
+          "page": 2,
+          "quote": "Attention mechanisms have become an integral part of compelling sequence modeling and transduction models"
+        }
+      ],
+      "children": [
+        {
+          "id": "t1",
+          "title": "卷积替代",
+          "summary": "ByteNet / ConvS2S 用卷积并行算，但关联任意两位置的运算量随距离增长。",
+          "anchors": [
+            {
+              "page": 2,
+              "quote": "the number of operations required to relate signals from two arbitrary input or output positions grows in the distance between positions"
+            }
+          ],
+          "children": []
+        }
+      ],
+      "key": "traditional"
+    },
+    {
+      "id": "sec:gap",
+      "title": "核心 Gap",
+      "summary": "因子分解与条件计算提了效率，串行计算的根本约束仍在。",
+      "anchors": [
+        {
+          "page": 2,
+          "quote": "The fundamental constraint of sequential computation, however, remains"
+        }
+      ],
+      "children": [],
+      "key": "gap"
+    },
+    {
+      "id": "sec:method",
+      "title": "本文方法",
+      "summary": "编码器与解码器各堆 6 层，全靠多头自注意力 + 逐位前馈，配残差与层归一化。",
+      "anchors": [
+        {
+          "page": 3,
+          "figure": "Figure 1",
+          "caption": "Figure 1: The Transformer - model architecture."
+        },
+        {
+          "page": 3,
+          "quote": "The encoder is composed of a stack of N = 6 identical layers"
+        }
+      ],
+      "children": [
+        {
+          "id": "m1",
+          "title": "多头自注意力",
+          "summary": "h = 8 个头并行，投影到 dk = dv = 64 的子空间，总计算量与单头相当。",
+          "anchors": [
+            {
+              "page": 5,
+              "quote": "Multi-head attention allows the model to jointly attend to information from different representation subspaces"
+            }
+          ],
+          "children": []
+        },
+        {
+          "id": "m2",
+          "title": "位置编码",
+          "summary": "既无循环也无卷积，故用不同频率的正弦余弦把位置信息加进输入。",
+          "anchors": [
+            {
+              "page": 6,
+              "quote": "we must inject some information about the relative or absolute position of the tokens in the sequence"
+            }
+          ],
+          "children": []
+        }
+      ],
+      "key": "method"
+    },
+    {
+      "id": "sec:results",
+      "title": "数据结果",
+      "summary": "WMT 2014 英德 28.4 / 英法 41.8 BLEU，8 张 P100 训 3.5 天即刷新单模型 SOTA。",
+      "anchors": [
+        {
+          "page": 8,
+          "figure": "Table 2",
+          "caption": "Table 2: The Transformer achieves better BLEU scores than previous state-of-the-art models"
+        },
+        {
+          "page": 8,
+          "quote": "the big transformer model (Transformer (big) in Table 2) outperforms the best previously reported models"
+        }
+      ],
+      "children": [
+        {
+          "id": "r1",
+          "title": "消融",
+          "summary": "单头比最佳设置差 0.9 BLEU，头数过多质量反而下降。",
+          "anchors": [
+            {
+              "page": 9,
+              "figure": "Table 3",
+              "caption": "Table 3: Variations on the Transformer architecture. Unlisted values are identical to thos"
+            },
+            {
+              "page": 9,
+              "quote": "single-head attention is 0.9 BLEU worse than the best setting, quality also drops off with too many heads"
+            }
+          ],
+          "children": []
+        }
+      ],
+      "key": "results"
+    },
+    {
+      "id": "sec:conclusion",
+      "title": "结论",
+      "summary": "首个完全依赖自注意力的序列转导模型，训练与推理都远快于循环结构。",
+      "anchors": [
+        {
+          "page": 10,
+          "quote": "we presented the Transformer, the first sequence transduction model based entirely on attention"
+        }
+      ],
+      "children": [],
+      "key": "conclusion"
+    }
+  ],
+  "relations": [],
+  "model": "preset",
+  "created": 1795564800000
+}

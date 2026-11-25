@@ -136,8 +136,8 @@ test("提示词塞进全文时守我们的额度预算，并丢掉参考文献�
   assert.ok(!input.includes("Doe et al"), "参考文献不进提示词：占额度又不给脉络信息");
   assert.match(input, /<<<PAGE 20>>>\nReferences$/, "参考文献页只留标题行，条目一条不发");
 
-  // 桌面版把预算交给调用方（那边是 70k），我们压到 60k：引擎默认值仍在，调用点说我们的数。
-  assert.match(source("core/outline.ts"), /const INPUT_BUDGET = 60_000/);
+  // 桌面版把预算交给调用方（那边是 70k），我们收到 30k：全文每多一字符，首字就多等一截。
+  assert.match(source("core/outline.ts"), /const INPUT_BUDGET = 30_000;/);
   assert.match(source("core/outline.ts"), /buildOutlineInput\(text\.pages, text\.headings, INPUT_BUDGET\)/);
 });
 

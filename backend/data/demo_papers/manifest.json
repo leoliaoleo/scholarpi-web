@@ -21,6 +21,7 @@
     "pdfUrl": "https://arxiv.org/pdf/1706.03762",
     "pdfFile": "1706p03762.pdf",
     "textFile": "1706p03762.json",
+    "outlineFile": "1706p03762.outline.json",
     "totalPages": 15,
     "bytes": 2215244
   },

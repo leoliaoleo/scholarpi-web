@@ -160,8 +160,12 @@ export function buildOutlineInput(pages: string[], headings: Heading[], budget =
 // ---------------------------------------------------------------------------
 // Prompt
 
-export function buildOutlinePrompt(opts: { title: string; abstract?: string; language: string; text: string }): string {
+export function buildOutlinePrompt(opts: { title: string; abstract?: string; language: string; text: string; maxNodes?: number }): string {
   const sec = (defs: SectionDef[]) => defs.map((d) => `  - "${d.key}" (${d.title}): ${d.hint}`).join("\n");
+  // 没有预算要求时保持桌面版原样；我们这边加一行硬预算，节点一多侧栏就成了清单，流式输出也白跑十几秒。
+  const budget = opts.maxNodes
+    ? `\n- Total budget: ≤ ${opts.maxNodes} nodes counting sections + children + grandchildren. Pick ≤ 6 sections (always "abstract", plus the ones carrying the argument). "abstract": ≤ 6 children. Other sections: children only for genuinely distinct ideas or numbers, ≤ 2 each, and no grandchildren — put the number in the section's own summary instead of adding a node.`
+    : "";
   return `You are analyzing an academic paper to build a compact, clickable reading outline ("文章脉络") shown in a narrow sidebar next to the PDF.
 
 Paper title: ${opts.title}
@@ -182,7 +186,7 @@ type ∈ "evolves" (A develops into B), "improves" (B fixes a weakness of A), "c
 ## Style — keep it SHORT (it is a sidebar, not a summary)
 - Write in ${opts.language}. Keep technical terms / method names in their original form.
 - title: ≤ 12 characters (CJK) or ≤ 5 words. summary: ONE sentence, ≤ 40 CJK characters or ≤ 25 words, concrete (numbers, names), no filler.
-- Depth ≤ 3 levels (section → child → grandchild). ≤ 6 children per node. A section may have no children if one summary suffices.
+- Depth ≤ 3 levels (section → child → grandchild). ≤ 6 children per node. A section may have no children if one summary suffices.${budget}
 - Results: include the key numbers (e.g. "成功率 72.1% vs 58.3%").
 
 ## The "abstract" section
@@ -387,6 +391,50 @@ export function normalizeOutline(raw: any, totalPages: number, model = "", parti
     model,
     created: Date.now(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Node budget
+
+function walkNodes(ns: OutlineNode[], out: OutlineNode[] = []): OutlineNode[] {
+  for (const n of ns) {
+    out.push(n);
+    walkNodes(n.children, out);
+  }
+  return out;
+}
+
+/**
+ * 把整棵树压到 `maxNodes` 个节点以内。提示词里已经要过预算，但模型还是会一路列到三十个——
+ * 侧栏要主干不要清单，而且多出来的节点只会让流式输出多跑十几秒。
+ *
+ * 删的顺序是「先深后浅、先散后核」：孙节点 → 非摘要章节的子节点 → 摘要拆解的子节点
+ * （逐字锚点最有用，最后才动）。就地修剪并返回同一棵树，顺手清掉指向已删节点的 relation。
+ */
+export function capOutline(outline: PaperOutline, maxNodes: number): PaperOutline {
+  if (!(maxNodes > 0)) return outline;
+  const sections = outline.sections;
+  const total = () => walkNodes(sections).length;
+  if (total() <= maxNodes) return outline;
+  const drop: (() => void)[] = [];
+  for (const s of sections) for (const c of s.children) for (const g of c.children) drop.push(() => cut(c.children, g));
+  for (const s of [...sections].reverse()) {
+    if (s.key === "abstract") continue;
+    for (const c of [...s.children].reverse()) drop.push(() => cut(s.children, c));
+  }
+  const abs = sections.find((s) => s.key === "abstract");
+  if (abs) for (const c of [...abs.children].reverse()) drop.push(() => cut(abs.children, c));
+  for (const d of drop) {
+    if (total() <= maxNodes) break;
+    d();
+  }
+  const ids = new Set(walkNodes(sections).map((n) => n.id));
+  return { ...outline, sections, relations: outline.relations.filter((r) => ids.has(r.from) && ids.has(r.to)) };
+}
+
+function cut(list: OutlineNode[], node: OutlineNode): void {
+  const i = list.indexOf(node);
+  if (i >= 0) list.splice(i, 1);
 }
 
 // ---------------------------------------------------------------------------

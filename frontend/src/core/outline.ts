@@ -11,11 +11,13 @@
  */
 import { getSettings } from "./config";
 import { Emitter } from "./events";
-import { clampThinking, getModel, streamSimple } from "./llm";
+import { PAPERS_BASE, staticJson } from "./host";
+import { getModel, streamSimple } from "./llm";
 import { figureRegion, paragraphRange, unionRects, type Rect } from "./outline-geometry";
 import {
   buildOutlineInput,
   buildOutlinePrompt,
+  capOutline,
   extractJson,
   normalizeOutline,
   parseFigureLabel,
@@ -32,8 +34,13 @@ import { gotoPage, highlightRects, refFromPaperKey } from "./viewer-state";
 
 /** 和桌面版同一个键，脉络 JSON 能直接拷到插件里继续用。 */
 export const OUTLINE_KV_PREFIX = "outline:v1:";
-/** 提示词里最多塞多少字符全文：演示额度按 token 计，15 页论文用不到桌面版那 70k 的上限。 */
-const INPUT_BUDGET = 60_000;
+/**
+ * 提示词里最多塞多少字符全文。桌面版塞 70k 无所谓（本地模型不排队），我们这边每一字符都要
+ * 过一遍公网边缘函数：全文越短，首字回来越快，流式树也就越早开始长。
+ */
+const INPUT_BUDGET = 30_000;
+/** 一棵脉络卡一次最多画多少个节点：超过 18 个就变成清单，读者反而找不到主干。 */
+const MAX_NODES = 18;
 /** 流式重解析的最短间隔，避免每来一个 delta 就重建整棵树。 */
 const PARTIAL_MS = 160;
 
@@ -63,7 +70,22 @@ function set(paperKey: string, state: OutlineState): void {
   outlineChanges.emit({ key: paperKey, state });
 }
 
-/** 读缓存（内存 → IndexedDB），不触发模型请求；上一次失败的提示也该被缓存盖过去。 */
+/** 预置示例论文自带的脉络：一次静态文件读取，不动模型、不烧演示额度。 */
+async function bundledOutline(paperKey: string): Promise<PaperOutline | null> {
+  const file = getItem(refFromPaperKey(paperKey))?.outlineFile;
+  if (!file) return null;
+  try {
+    const raw = await staticJson<PaperOutline>(`${PAPERS_BASE}/${encodeURIComponent(file)}`);
+    if (raw?.version !== 1 || !Array.isArray(raw.sections) || !raw.sections.length) return null;
+    await kvSet(OUTLINE_KV_PREFIX + paperKey, JSON.stringify(raw));
+    return raw;
+  } catch {
+    // 没打包静态脉络（自己导入的论文）或网络抖了一下：照常留给读者点「梳一遍」
+    return null;
+  }
+}
+
+/** 读缓存（内存 → IndexedDB → 示例论文预置的静态脉络），不触发模型请求；上一次失败的提示也该被缓存盖过去。 */
 export async function loadOutline(paperKey: string): Promise<OutlineState> {
   const cur = outlineState(paperKey);
   if (cur.status === "loading" || cur.status === "ready") return cur;
@@ -78,6 +100,10 @@ export async function loadOutline(paperKey: string): Promise<OutlineState> {
   } catch {
     // 缓存读坏了就算了，让读者能重新生成
   }
+  if (outlineState(paperKey).status === "idle") {
+    const preset = await bundledOutline(paperKey);
+    if (preset && outlineState(paperKey).status === "idle") set(paperKey, { status: "ready", outline: preset });
+  }
   return outlineState(paperKey);
 }
 
@@ -89,7 +115,7 @@ export function generateOutline(paperKey: string, force = false): void {
   job?.ctrl.abort();
   const ctrl = new AbortController();
   job = { key: paperKey, ctrl };
-  set(paperKey, { status: "loading", stage: "读取全文…", started: Date.now() });
+  set(paperKey, { status: "loading", stage: "正在读取论文全文…", started: Date.now() });
   void run(paperKey, ctrl.signal).finally(() => {
     if (job?.key === paperKey) job = null;
   });
@@ -137,25 +163,26 @@ async function run(paperKey: string, signal: AbortSignal): Promise<void> {
       abstract: meta.abstract,
       language: s.replyLanguage || "简体中文",
       text: buildOutlineInput(text.pages, text.headings, INPUT_BUDGET),
+      maxNodes: MAX_NODES,
     });
     const totalPages = text.totalPages || text.pages.length;
     for (let attempt = 0; attempt < 2 && !signal.aborted; attempt++) {
-      stage(attempt ? "重新梳理…" : "思考中…");
+      stage(attempt ? "重新梳理…" : "正在抽取章节与关键句…");
       let rev = 0;
       try {
-        const reply = await collect(model, prompt, s.thinkingLevel, attempt, signal, (acc, thinking) => {
+        const reply = await collect(model, prompt, signal, (acc, thinking) => {
           if (signal.aborted) return;
           const raw = parsePartialJson(acc, { completeStringsOnly: true });
           if (!raw) return;
           try {
-            const partial = normalizeOutline(raw, totalPages, modelId, true);
+            const partial = capOutline(normalizeOutline(raw, totalPages, modelId, true), MAX_NODES);
             // rev 每变一次，面板就知道这是新长出来的一层，而不是同一段文字重复渲染。
             if (partial.sections.length) set(paperKey, { status: "loading", stage: "生成中…", started, partial, rev: ++rev, thinking });
           } catch {
             // JSON 还没长成能解析的样子，等下一段
           }
         });
-        const outline = normalizeOutline(extractJson(reply), totalPages, modelId);
+        const outline = capOutline(normalizeOutline(extractJson(reply), totalPages, modelId), MAX_NODES);
         stage("定位段落…");
         validateAnchors(outline, text.pages);
         await kvSet(OUTLINE_KV_PREFIX + paperKey, JSON.stringify(outline));
@@ -188,8 +215,6 @@ function transportError(e: any): Error {
 async function collect(
   model: ReturnType<typeof getModel>,
   prompt: string,
-  level: string,
-  attempt: number,
   signal: AbortSignal,
   onPartial: (text: string, thinking: string) => void,
 ): Promise<string> {
@@ -202,9 +227,10 @@ async function collect(
       { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
       {
         signal,
-        maxTokens: 16000,
-        // 第二次不再思考：第一遍已经把结构想清楚了，重试只为把 JSON 写完整。
-        reasoning: attempt ? undefined : clampThinking(model, level || "medium"),
+        maxTokens: 8000,
+        // 脉络是结构化抽取，不是推理题：这里固定走非思考通道，不受右下角「思考：高」拖累。
+        // 跟着全局开关走，读者要先干等几十秒思考流，树才长出第一个节点。
+        reasoning: "off",
       },
     );
     for await (const ev of stream as any) {

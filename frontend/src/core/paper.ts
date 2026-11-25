@@ -36,6 +36,8 @@ export interface Paper {
   /** demo papers: file names shipped under /papers in the static bundle */
   pdfFile?: string;
   textFile?: string;
+  /** 预置好的文章脉络（同 /papers 下的静态 JSON）：示例论文首访就有的看，不用等模型。 */
+  outlineFile?: string;
   addedAt: number;
   totalPages?: number;
 }
@@ -59,6 +61,7 @@ interface DemoEntry {
   pdfUrl: string;
   pdfFile: string;
   textFile: string;
+  outlineFile?: string;
   totalPages: number;
 }
 
@@ -99,6 +102,7 @@ function demoToPaper(d: DemoEntry): Paper {
     source: "demo",
     pdfFile: d.pdfFile,
     textFile: d.textFile,
+    outlineFile: d.outlineFile,
     addedAt: 0,
     totalPages: d.totalPages,
   };

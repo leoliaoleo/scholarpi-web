@@ -161,7 +161,9 @@ export function OutlinePanel({
         {st.status === "idle" && (
           <div class="ol-block">
             <p>把整篇论文梳成「摘要拆解 → 章节 → 关键句」：点每条关键句会跳到那一页，并在 PDF 上圈出它引用的原文。</p>
-            <p class="muted small">这需要读全文，会用掉一次演示额度；梳理过的论文下次直接显示缓存，不再请求模型。</p>
+            <p class="muted small">
+              这需要读全文，会用掉一次演示额度；梳理过的论文下次直接显示缓存，不再请求模型。脉络走极速非思考通道，节点一秒内就开始长出来。
+            </p>
             <button class="primary" onClick={() => generateOutline(paperKey)}>
               梳一遍这篇的脉络
             </button>
