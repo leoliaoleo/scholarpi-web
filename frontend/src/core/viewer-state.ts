@@ -2,7 +2,8 @@
  * Shared state + command bus between the agent core and the pdf.js reader UI.
  * The reader owns the pixels; tools only ask it to move or highlight.
  */
-import { Emitter } from "./events";
+// .ts extension: node --test loads this module directly (test/outline-panel.test.ts).
+import { Emitter } from "./events.ts";
 
 export interface ViewerState {
   /** paperKey (`${libraryID}/${itemKey}`) currently displayed, null when empty. */

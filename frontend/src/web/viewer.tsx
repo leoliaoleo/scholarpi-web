@@ -20,6 +20,7 @@ import { renderActiveRegion } from "../core/vision";
 import { gotoPage, refFromPaperKey, setViewerState, viewerCommands, viewerState, type ViewerCommand } from "../core/viewer-state";
 import { registerViewerHooks, refreshContext, subscribe, getApi, type ViewerHooks } from "./api";
 import { Markdown } from "./markdown";
+import { OutlinePanel } from "./outline";
 
 const api = getApi();
 
@@ -63,6 +64,7 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
   const [pulse, setPulse] = useState<{ pageIndex: number; rects: number[][]; keep: boolean } | null>(null);
   const [sel, setSel] = useState<{ info: SelInfo; left: number; top: number } | null>(null);
   const [regionOn, setRegionOn] = useState(false);
+  const [outlineOn, setOutlineOn] = useState(false);
   const [busy, setBusy] = useState<"" | "download" | "parse">("");
   const [dl, setDl] = useState<{ r: number; t: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -361,6 +363,16 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
             >
               ▣
             </button>
+            <button
+              class="icon-btn"
+              title="文章脉络：摘要拆解 + 章节关键句，点关键句跳页并在 PDF 上圈出原文"
+              aria-label="文章脉络面板"
+              aria-pressed={outlineOn}
+              data-active={String(outlineOn)}
+              onClick={() => setOutlineOn(!outlineOn)}
+            >
+              ☰
+            </button>
           </>
         )}
       </div>
@@ -372,6 +384,15 @@ export function Viewer({ paperKey, onOpenFile, active = true }: ViewerProps) {
             ×
           </button>
         </div>
+      )}
+
+      {outlineOn && item && docKey && doc && (
+        <OutlinePanel
+          paperKey={docKey}
+          item={item}
+          onClose={() => setOutlineOn(false)}
+          onNotice={(text, tone) => setNotice({ text, tone: tone || "info" })}
+        />
       )}
 
       <div
